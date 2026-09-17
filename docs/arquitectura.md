@@ -46,7 +46,7 @@ request
      → rateLimit (auth y public)
      → auth: requireAuth (Bearer) | requireApiKey (agent) | nada (public)
      → requireBusiness: resuelve negocio y rol del usuario (fail-fast de rol)
-     → validate(zod): body / params / query
+     → schema.parse (Zod) en la ruta: body / params / query
      → service
          → withDb(ctx, tx => repo...)   ← transacción con rol + claims (RLS)
  → res.json(...)
@@ -109,6 +109,7 @@ export type DbCtx =
   | { role: "anon" }
   | { role: "service_role" };
 
+// getPrisma(): PrismaClient con engineType "client" + PrismaPg({ connectionString: DATABASE_URL })
 export async function withDb<T>(ctx: DbCtx, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return getPrisma().$transaction(async (tx) => {
     const claims = ctx.role === "authenticated"
@@ -150,12 +151,11 @@ toki-api/
 │   ├── config.ts               # env con Zod; falla si faltan secretos en prod
 │   ├── middleware/
 │   │   ├── auth.ts             # requireAuth (Bearer JWT)
-│   │   ├── business.ts         # requireBusiness, requireRole
+│   │   ├── business.ts         # requireBusiness, requireRole, requireAdmin
 │   │   ├── apiKey.ts           # requireApiKey (agente)
-│   │   ├── rateLimit.ts
-│   │   ├── validate.ts         # helper Zod para body/params/query
+│   │   ├── rateLimit.ts        # authLimiter, publicWriteLimiter, publicReadLimiter
 │   │   ├── logging.ts          # morgan
-│   │   └── error.ts            # notFound + errorHandler
+│   │   └── error.ts            # notFound + errorHandler + mapDbError
 │   ├── lib/
 │   │   ├── db.ts               # Prisma + withDb
 │   │   ├── errors.ts           # ApiError y códigos
@@ -183,7 +183,8 @@ toki-api/
 │   │   └── 0003_realtime_notify/
 │   └── seed.ts
 ├── scripts/
-│   ├── bootstrap-prod.sql      # roles toki_app con password fuerte (antes del 1er deploy)
+│   ├── bootstrap-prod.sql      # rol toki_app con password fuerte (antes del 1er deploy)
+│   ├── lib/db-admin.ts         # rol toki_app local, grants, migraciones (prisma o MIGRATE_WITH=sql)
 │   ├── migrate-dev.ts · migrate-test.ts
 │   ├── migrate-supabase.ts     # datos + archivos Supabase → VPS/R2
 │   └── admin-cli.ts
@@ -309,7 +310,7 @@ ZERNIO_BASE_URL=https://zernio.com/api/v1
 4. **Entrypoint:** `prisma migrate deploy` con `DATABASE_URL_MIGRATE` → `node dist/server.js` con `DATABASE_URL`.
 5. **Healthcheck:** `GET /v1/health` → `{ ok: true, db: "up" }`.
 
-**Dockerfile:** el mismo multi-stage Debian de back-lamelas (`node:22-slim`, `openssl`, toolchain para bcrypt en el builder).
+**Dockerfile:** multi-stage Debian basado en back-lamelas (`node:22-slim`). Sin toolchain de C++ (bcrypt 6 trae binarios) y sin query engine nativo (Prisma `engineType = "client"`); `openssl` queda para el schema engine de `prisma migrate deploy`.
 
 ## 13. Tests
 
@@ -321,7 +322,7 @@ ZERNIO_BASE_URL=https://zernio.com/api/v1
 | Agente | API key, dedup de mensajes, tools principales | `test/agent.test.ts` |
 | Contrato | Endpoints públicos no exponen datos privados (tests anti-fuga) | `test/public.test.ts` |
 
-Postgres local de Homebrew, base `toki_test`. `npm run test:prepare` aplica las 3 migraciones y el seed.
+Postgres local de Homebrew, base `toki_test`. `npm run test:prepare` la recrea y aplica las migraciones; cada archivo de test siembra sus datos (`test/helpers.ts`: 2 negocios, owner y staff). La app bajo test se conecta como `toki_app`, igual que en producción.
 
 Al terminar una tarea: `npm run lint && npx tsc --noEmit && npm run build && npm test`.
 

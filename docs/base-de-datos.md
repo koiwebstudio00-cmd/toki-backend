@@ -228,7 +228,9 @@ La API corre cada transacción con `SET LOCAL ROLE` + `request.jwt.claims` (ver 
 6. **Nunca editar una migración aplicada.**
 7. **Toda tabla nueva con `business_id`** necesita: RLS habilitado, policies de SELECT y escritura, grants a `authenticated`/`service_role`, índice por `business_id`, trigger `set_updated_at` y test de aislamiento.
 
-**Primera verificación en la Mac** (no se pudo correr acá porque requiere los engines de Prisma): después de aplicar `0001`–`0003` en la base local, correr `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <url>`. Solo deben aparecer diferencias por los índices parciales documentados al final de `schema.prisma`.
+**Nota:** `pg_dump` 16.10+ agrega líneas `\restrict`/`\unrestrict` (comandos de psql). Se quitaron de `0001` porque rompen `prisma migrate deploy`; nunca pegar un dump sin limpiarlas.
+
+**Verificación pendiente en la Mac** (en el sandbox no hay acceso a los binarios de Prisma): después de aplicar `0001`–`0003` en la base local, correr `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <url>`. Solo deben aparecer diferencias por los índices parciales documentados al final de `schema.prisma`.
 
 ## 8. Bootstrap de producción
 

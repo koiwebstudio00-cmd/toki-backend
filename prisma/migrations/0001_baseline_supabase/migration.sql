@@ -31,7 +31,6 @@ END $$;
 -- PostgreSQL database dump
 --
 
-\restrict ay1PbtMMcxiHu7B874RerX4VPVcfnPXVA1PQJOTVsD0ePbJSirsiZBegFkd0ZDv
 
 
 SET statement_timeout = 0;
@@ -4660,5 +4659,4 @@ GRANT ALL ON TABLE public.whatsapp_order_draft_items TO service_role;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ay1PbtMMcxiHu7B874RerX4VPVcfnPXVA1PQJOTVsD0ePbJSirsiZBegFkd0ZDv
 

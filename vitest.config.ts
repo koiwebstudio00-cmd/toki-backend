@@ -1,0 +1,13 @@
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    environment: "node",
+    include: ["test/**/*.test.ts"],
+    setupFiles: ["test/setup.ts"],
+    testTimeout: 15000,
+    hookTimeout: 30000,
+    // Los tests de integración comparten la BD de test: sin paralelismo entre archivos.
+    fileParallelism: false
+  }
+});

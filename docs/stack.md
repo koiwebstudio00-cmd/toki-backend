@@ -9,11 +9,11 @@
 | Runtime | Node.js | 22 LTS | Misma imagen base que back-lamelas (`node:22-slim`) |
 | Lenguaje | TypeScript | ^5.7 | `strict`, ESM (`"type": "module"`) |
 | Framework HTTP | Express | ^5.1 | Errores async nativos; estructura por módulos de back-lamelas |
-| ORM | Prisma (`prisma`, `@prisma/client`) | **6.19.x fijo** | Mismo major que back-lamelas. Prisma 7 cambia la configuración (`prisma.config.ts`, adapters): no migrar en esta etapa |
+| ORM | Prisma (`prisma`, `@prisma/client`, `@prisma/adapter-pg`) | **6.19.3 fijo** | Mismo major que back-lamelas, con `engineType = "client"` (sin binario Rust, GA desde 6.16): el cliente habla con Postgres por el driver `pg`. La imagen no depende del query engine nativo y los tests corren en cualquier entorno. `prisma migrate` sigue igual. Prisma 7: no migrar en esta etapa |
 | Validación | Zod | ^3.24 | Schemas por endpoint; mismo major que back-lamelas |
 | Base de datos | PostgreSQL | 17 (imagen `postgres:17`, Debian) | Extensiones: `citext`, `pg_trgm`, `unaccent` |
-| LISTEN/NOTIFY | `pg` | ^8 | Una conexión dedicada para tiempo real (Prisma no soporta LISTEN) |
-| Contraseñas | `bcrypt` | ^5.1 | Compatible con los hashes de Supabase Auth (`$2a$`): los usuarios migran sin resetear su contraseña |
+| Driver Postgres | `pg` | ^8 | Lo usa el adapter de Prisma, los scripts de BD y la conexión LISTEN de tiempo real |
+| Contraseñas | `bcrypt` | ^6.0 (binarios precompilados, sin toolchain en Docker) | Compatible con los hashes de Supabase Auth (`$2a$`): los usuarios migran sin resetear su contraseña |
 | Tokens | `jsonwebtoken` | ^9 | Access JWT HS256, 15 min |
 | Emails | `nodemailer` + **Resend** (SMTP) | ^6.9 | Mismo `lib/mailer.ts` que back-lamelas, ya verificado con Resend en producción |
 | Storage | `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` | ^3.700 | Cloudflare R2. Requiere `requestChecksumCalculation: "WHEN_REQUIRED"` (gotcha resuelto en Lamelas) |
@@ -32,13 +32,14 @@ build               tsc
 start               node dist/server.js
 lint                eslint .
 test                vitest run
-db:generate         prisma generate
+typecheck           tsc -p tsconfig.dev.json          # src + test + scripts + seed
+db:generate         prisma generate                   # también en postinstall
 db:migrate:create   prisma migrate dev --create-only
-db:migrate:deploy   tsx scripts/migrate-dev.ts        # usa DATABASE_URL_MIGRATE
+db:migrate:deploy   tsx scripts/migrate-dev.ts        # crea toki_app (dev) + migra con DATABASE_URL_MIGRATE
 test:prepare        tsx scripts/migrate-test.ts       # recrea toki_test y aplica migraciones
-seed                tsx prisma/seed.ts                # 2 negocios de prueba + usuarios
-migrate:supabase    tsx scripts/migrate-supabase.ts   # migración única de datos y archivos
-admin               tsx scripts/admin-cli.ts          # soporte: usuarios, negocios
+seed                tsx prisma/seed.ts                # 2 negocios demo
+migrate:supabase    tsx scripts/migrate-supabase.ts   # (F7) migración única de datos y archivos
+admin               tsx scripts/admin-cli.ts          # (roadmap) soporte: usuarios, negocios
 ```
 
 ## 2. Infraestructura

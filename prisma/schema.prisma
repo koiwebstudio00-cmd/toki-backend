@@ -1,16 +1,21 @@
 // Generado desde la réplica de la base (docs/base-de-datos.md). Refleja 0001_baseline_supabase.
 // Reglas: Prisma NO es dueño de RLS, funciones ni triggers: esos cambios van en SQL dentro de migraciones.
-// Crear migraciones siempre con `prisma migrate dev --create-only` y revisar el SQL antes de aplicar.
+// Crear migraciones siempre con `npm run db:migrate:create -- --name x` y revisar el SQL antes de aplicar.
 
+// engineType "client": Prisma sin binario Rust (GA desde 6.16). El cliente usa el
+// driver `pg` vía @prisma/adapter-pg (ver src/lib/db.ts). Motivos: la imagen no
+// depende del query engine nativo ni de openssl, y los tests corren en cualquier
+// entorno. `prisma migrate` sigue usando el schema engine como siempre.
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["multiSchema"]
+  provider   = "prisma-client-js"
+  engineType = "client"
 }
 
 datasource db {
   provider  = "postgresql"
+  // Los scripts de migración setean DATABASE_URL = DATABASE_URL_MIGRATE (rol dueño).
+  // En runtime la conexión la arma src/lib/db.ts con el adapter, no esta URL.
   url       = env("DATABASE_URL")
-  directUrl = env("DATABASE_URL_MIGRATE")
   schemas   = ["auth", "public"]
 }
 

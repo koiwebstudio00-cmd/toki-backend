@@ -8,7 +8,7 @@
 
 | Fase | Contenido | Entregable | Estimación |
 | --- | --- | --- | --- |
-| **F0. Base** | Repo `toki-api` con el esqueleto de back-lamelas (config, errores, logging, mailer, R2, Zernio, Dockerfile, tests). Prisma con `schema.prisma` + migraciones `0001`–`0003`. `withDb`, `requireAuth`, `requireBusiness`, `requireApiKey`, rate limit. Módulo `health`. Seed con 2 negocios. Tests RLS | `npm test` en verde contra `toki_test`; `GET /v1/health` local | 1-2 días |
+| **F0. Base** ✅ 2026-09-17 | Repo `toki-api` con el esqueleto de back-lamelas (config, errores, logging, mailer, R2, Zernio, Dockerfile, tests). Prisma con `schema.prisma` + migraciones `0001`–`0003`. `withDb`, `requireAuth`, `requireBusiness`, `requireApiKey`, rate limit. Módulo `health`. Seed con 2 negocios. Tests RLS | `npm test` en verde contra `toki_test`; `GET /v1/health` local | 1-2 días |
 | **F1. Auth y cuenta** | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
 | **F2. Negocio y catálogo** | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
 | **F3. Pedidos** | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
@@ -18,6 +18,18 @@
 | **F7. Migración de datos y corte** | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
 
 **Total estimado:** 14 a 20 días hábiles. F6 puede avanzar en paralelo desde F2, módulo por módulo.
+
+## Estado
+
+**F0 terminada (2026-09-17).**
+
+- **Esqueleto:** config, `withDb` con roles de contexto, `mapDbError`, `requireAuth`, `requireBusiness`/`requireRole`, `requireApiKey`, rate limits, libs (tokens, passwords, mailer, R2, Zernio, money), `health`, Dockerfile y entrypoint.
+- **BD y seed:** scripts de migración con rol `toki_app`, seed de 2 negocios.
+- **Tests:** 31 en verde, entre ellos aislamiento RLS, contextos y middlewares.
+- **Verificado:** lint, typecheck, build; arranque y cierre limpio del server.
+- **Pendiente en la Mac:** `npm install`, `npm run db:migrate:deploy` con Prisma real (en el sandbox se aplicaron con `MIGRATE_WITH=sql`), `npm run test:prepare && npm test`.
+
+**Siguiente:** F1 (auth y cuenta).
 
 ## Orden y dependencias
 
