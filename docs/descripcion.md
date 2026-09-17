@@ -4,6 +4,7 @@
 
 **Docs relacionados:**
 
+- [`setup-local.md`](setup-local.md): cómo levantar el proyecto en tu compu
 - [`stack.md`](stack.md): tecnologías y versiones
 - [`arquitectura.md`](arquitectura.md): despliegue, seguridad, estructura del código
 - [`api.md`](api.md): contrato completo de endpoints
