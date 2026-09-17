@@ -114,45 +114,53 @@ SessionBusiness = { id, name, slug, logoUrl: string | null, isActive: boolean, r
 
 ---
 
-## 4. `businesses`
+## 4. `businesses` ✅ implementado (F2)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
 | POST | `/businesses` | U | `{ name, slug, phone?, address?, city?, description? }` | `201 { id, slug }` | Onboarding → RPC `create_business_with_owner` |
-| GET | `/business` | M | — | Negocio completo | `SettingsPages`, `ProductsPage` |
-| PATCH | `/business` | A | `{ name?, slug?, description?, businessType?, logoUrl?, coverUrl?, phone?, whatsappPhone?, address?, city?, timezone?, estimatedDeliveryMinutes?, minimumOrderAmount?, deliveryFee?, isActive? }` | Negocio | `businesses.update` |
+| GET | `/business` | M | — | `Business` (con `isOpen`) | `SettingsPages`, `ProductsPage` |
+| PATCH | `/business` | A | Parcial: `{ name, slug, description, businessType, logoUrl, coverUrl, phone, whatsappPhone, address, city, timezone, estimatedDeliveryMinutes, minimumOrderAmount, deliveryFee, isActive }` | `Business` | `businesses.update` |
 | PATCH | `/business/status` | A | `{ manualStatus: "auto" \| "open" \| "closed" }` | `{ manualStatus, isOpen }` | `businesses.update` |
-| GET | `/business/hours` | M | — | `{ data: [{ dayOfWeek, isOpen, opensAt, closesAt, opensAt2, closesAt2 }] }` (7 filas) | `business_hours.select` |
-| PUT | `/business/hours` | A | `{ hours: [7 filas] }` | `{ data }` | `business_hours.upsert` |
-| GET | `/business/special-hours` | M | `?from=YYYY-MM-DD` | `{ data: [{ id, date, isClosed, opensAt, closesAt, note }] }` | `business_special_hours.select` |
-| PUT | `/business/special-hours` | A | `{ specialHours: [...] }` (reemplaza las futuras) | `{ data }` | `delete` + `insert` |
-| DELETE | `/business/special-hours/:id` | A | — | `204` | `business_special_hours.delete` |
-| GET | `/business/checklist` | M | — | `{ hasLogo, hasCover, hasHours, hasPaymentMethod, activeCategories, availableProducts, whatsappConnected, deliveryConfigured, completed }` | `OnboardingChecklist` (6 queries) |
+| GET | `/business/hours` | M | — | `{ data: Hour[7] }` | `business_hours.select` |
+| PUT | `/business/hours` | A | `{ hours: Hour[7] }` | `{ data: Hour[7] }` | `business_hours.upsert` |
+| GET | `/business/special-hours` | M | `?from=YYYY-MM-DD` | `{ data: SpecialHour[] }` | `business_special_hours.select` |
+| PUT | `/business/special-hours` | A | `{ specialHours: SpecialHour[] }` (**reemplaza todos**, igual que el front hoy) | `{ data }` | `delete` + `insert` |
+| DELETE | `/business/special-hours/:id` | A | — | `204` | — |
+| GET | `/business/checklist` | M | — | `{ slug, isActive, deliveryFee, minimumOrderAmount, openDays, activeCategories, availableProducts, hasLogo, hasCover, hasHours, hasPaymentMethod, hasCategories, hasProducts, whatsappConnected, completed }` | `OnboardingChecklist` (6 queries → 1) |
 
-**Validaciones:**
+```ts
+Business = { id, name, slug, description, businessType, logoUrl, coverUrl, phone, whatsappPhone, address, city,
+             country, currency, timezone, estimatedDeliveryMinutes, minimumOrderAmount: number, deliveryFee: number,
+             isActive, manualStatus, isOpen: boolean, createdAt, updatedAt }
+Hour = { dayOfWeek: 0..6, isOpen, opensAt: "HH:mm" | null, closesAt, opensAt2, closesAt2 }
+SpecialHour = { id?, date: "YYYY-MM-DD", isClosed, opensAt: "HH:mm" | null, closesAt, note }
+```
 
-- `slug` con `^[a-z0-9]+(?:-[a-z0-9]+)*$`; si ya existe → 409.
-- `closes_at` y `opens_at` en pares; un cierre que cruza la medianoche es válido.
+**Reglas implementadas:**
 
-**Services (`businesses/service.ts`):**
-
-| Función | Qué hace |
-| --- | --- |
-| `createWithOwner(ctx, input)` | Llama `create_business_with_owner` (crea negocio, owner, bot_settings y horarios) |
-| `getCurrent(ctx)` / `update(ctx, input)` | Lectura y edición; al cambiar logo o portada borra el objeto anterior de R2 |
-| `setManualStatus(ctx, status)` | Actualiza y devuelve `business_is_open(id)` |
-| `getHours(ctx)` / `replaceHours(ctx, hours)` | Upsert de los 7 días en una transacción |
-| `listSpecialHours` / `replaceSpecialHours` / `deleteSpecialHour` | — |
-| `getChecklist(ctx)` | Una query agregada |
+- **Onboarding:** además de lo que crea la función (negocio, owner, `bot_settings`, 7 días de 19:00 a 23:30), crea `payment_settings` con efectivo y transferencia habilitados.
+- **Slug:**
+  - Formato kebab, 3 a 60 caracteres, normalizado a minúsculas.
+  - Slug en uso → 409 "Ese link ya está en uso".
+  - **Reservados** (chocan con rutas del front `/:businessSlug`): `login`, `register`, `onboarding`, `dashboard`, `forgot-password`, `reset-password`, `verify-email`, `api`, `admin`, `app`, `www`, `toki`, `static`, `assets`, `defaults`.
+- **Imágenes (`logoUrl`, `coverUrl`):** solo se aceptan `null`, un asset por defecto del front (`/defaults/...`) o una URL de **nuestro bucket público dentro de la carpeta del negocio**. Al reemplazar una imagen, la anterior se borra de R2 después del commit.
+- **Horarios:**
+  - Los 7 días, cada uno una vez.
+  - Si está abierto, apertura y cierre obligatorios; el segundo turno completo o vacío, y empezando después del cierre del primero.
+  - Los días cerrados se guardan sin horas.
+  - Se admiten cierres después de medianoche (`closesAt2: "00:30"`).
+- **Horarios especiales:** fechas únicas; si está abierto, apertura y cierre obligatorios; hasta 200.
+- **`X-Business-Id` ajeno:** 403 en cualquier ruta.
 
 ---
 
-## 5. `settings`
+## 5. `settings` ✅ implementado (F2)
 
 | Método | Ruta | Auth | Body | Origen |
 | --- | --- | --- | --- | --- |
-| GET | `/settings/payments` | M | — | `payment_settings.select` |
-| PUT | `/settings/payments` | A | `{ cashEnabled, transferEnabled, transferAlias?, transferCbu?, transferHolder?, transferBank?, mercadopagoEnabled }` | `payment_settings.upsert` |
+| GET | `/settings/payments` | M | — (sin fila devuelve los defaults) | `payment_settings.select` |
+| PUT | `/settings/payments` | A | `{ cashEnabled, transferEnabled, transferCbu?, transferAlias?, transferHolder?, transferBank? }` | `payment_settings.upsert` |
 | GET | `/settings/loyalty` | M | — | `loyalty_settings.select` |
 | PUT | `/settings/loyalty` | A | `{ isEnabled, pointsPerCurrency, pointsPerOrder, redeemRate, minPointsToRedeem }` | `loyalty_settings.upsert` |
 | GET | `/settings/bot` | M | — | `bot_settings` (hoy la pantalla es un mock) |
@@ -162,77 +170,91 @@ SessionBusiness = { id, name, slug, logoUrl: string | null, isActive: boolean, r
 | PATCH | `/settings/bot/faqs/:id` | A | `{ question?, answer?, isActive? }` | — |
 | DELETE | `/settings/bot/faqs/:id` | A | — | — |
 
-**Validaciones de pagos** (espejo de los CHECK):
+**Reglas de pagos** (las mismas de `payment.schema.ts` del front):
 
-- Alias ≤ 80, CBU/CVU entre 6 y 40, titular y banco ≤ 120.
 - Al menos un medio habilitado.
-- `mercadopagoEnabled` se rechaza con 400 mientras no exista la integración.
+- Con transferencia habilitada, CBU/CVU obligatorio.
+- CBU/CVU: solo dígitos, de 6 a 22.
+- Alias ≤ 40; titular y banco ≤ 80.
+- `""` se guarda como `null`.
+- `mercadopagoEnabled: true` → 400 "Mercado Pago todavía no está disponible".
 
-**Services:** `getPaymentSettings`, `upsertPaymentSettings`, `getLoyalty`, `upsertLoyalty`, `getBotSettings`, `updateBotSettings`, `listFaqs`, `createFaq`, `updateFaq`, `deleteFaq`.
+**FAQs:** máximo 200 por negocio.
 
 ---
 
-## 6. `coupons`
+## 6. `coupons` ✅ implementado (F2)
 
 | Método | Ruta | Auth | Body | Origen |
 | --- | --- | --- | --- | --- |
-| GET | `/coupons` | M | — | `coupons.select` |
+| GET | `/coupons` | **A** | — | `coupons.select` |
 | POST | `/coupons` | A | `{ code, description?, discountType: "percent" \| "fixed", discountValue, minimumOrderAmount?, startsAt?, endsAt?, usageLimit?, isActive? }` | `coupons.upsert` |
 | PATCH | `/coupons/:id` | A | Mismos campos, opcionales | `coupons.upsert` |
 | DELETE | `/coupons/:id` | A | — | `coupons.delete` (hoy sin filtro de negocio: queda resuelto) |
 
 **Reglas:**
 
-- `code` en mayúsculas `[A-Z0-9-]` y único por negocio (409).
-- `percent` ≤ 100.
-- `endsAt ≥ startsAt`.
-
-**Services:** `list`, `create`, `update`, `remove`.
+- `code`: se normaliza a mayúsculas, `[A-Z0-9-]`, 3 a 30 caracteres. Repetido en el negocio → 409; en otro negocio se permite.
+- `discountValue > 0`; si es `percent`, ≤ 100.
+- `endsAt ≥ startsAt`. El PATCH valida contra el **estado final** (por ejemplo, pasar a `percent` un cupón fijo de $900 → 400).
+- **Fechas:** acepta `YYYY-MM-DD` (se toma 00:00 hora Argentina) o ISO completo; se devuelven en ISO UTC.
+- **Borrar un cupón:** los pedidos que lo usaron conservan `coupon_code`.
+- **`GET` solo para owner y admin:** la policy RLS le muestra a staff únicamente los cupones activos, así que su listado sería incompleto.
 
 ---
 
-## 7. `catalog`
+## 7. `catalog` ✅ implementado (F2)
 
 ### 7.1 Categorías
 
-| Método | Ruta | Auth | Body | Origen |
-| --- | --- | --- | --- | --- |
-| GET | `/categories` | M | `?active=true\|false` | `categories.select` |
-| POST | `/categories` | A | `{ name, description?, imageUrl?, isActive?, sortOrder? }` | `categories.insert` |
-| PATCH | `/categories/:id` | A | Mismos campos, opcionales | `categories.update` |
-| PATCH | `/categories/reorder` | A | `{ ids: [uuid...] }` (orden final) | Updates de `sort_order` |
-| DELETE | `/categories/:id` | A | — | `categories.delete` (los productos quedan sin categoría: `SET NULL`) |
+| Método | Ruta | Auth | Body | Respuesta | Origen |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/categories` | M | `?active=true\|false` | `{ data: Category[] }` con `products` y `availableProducts` | `categories.select` + conteos en el front |
+| POST | `/categories` | A | `{ name, description?, imageUrl?, isActive?, sortOrder? }` (sin `sortOrder` va al final) | `201 Category` | `categories.insert` |
+| PATCH | `/categories/:id` | A | Mismos campos, opcionales | `Category` | `categories.update` |
+| PATCH | `/categories/reorder` | A | `{ ids: uuid[] }` (orden final; las no listadas quedan al final) | `{ data: Category[] }` | Updates de `sort_order` |
+| DELETE | `/categories/:id` | A | — | `204` (los productos quedan sin categoría y se borra la imagen) | `categories.delete` |
 
 ### 7.2 Productos
 
 | Método | Ruta | Auth | Body / Query | Origen |
 | --- | --- | --- | --- | --- |
-| GET | `/products` | M | `?categoryId=&available=&search=&lowStock=true&barcode=` | `ProductsPage`, `ManualSalePage` (con opciones y valores) |
+| GET | `/products` | M | `?categoryId=&available=&featured=&lowStock=true&search=&barcode=` | `ProductsPage`, `ManualSalePage` |
 | GET | `/products/:id` | M | — | `ProductEditorPage` |
 | POST | `/products` | A | `ProductInput` | `products.insert` + `product_options.insert` + `product_option_values.insert` |
-| PUT | `/products/:id` | A | `ProductInput` (reemplaza opciones) | `products.update` + delete/insert de opciones |
+| PUT | `/products/:id` | A | `ProductInput` (reemplazo completo) | `products.update` + delete/insert de opciones |
 | PATCH | `/products/:id/availability` | A | `{ isAvailable }` | `products.update({ is_available })` |
 | PATCH | `/products/:id/stock` | A | `{ stockQuantity, trackStock? }` | `products.update({ stock_quantity })` |
-| DELETE | `/products/:id` | A | — | Borra el producto y su imagen en R2 |
+| DELETE | `/products/:id` | A | — | Borra producto, opciones e imagen en R2 |
 
 ```ts
 ProductInput = {
-  categoryId?: uuid | null, newCategoryName?: string,   // crear categoría al vuelo (ProductEditorPage)
-  name: string, description?: string, price: number, imageUrl?: string | null,
-  isAvailable?: boolean, isFeatured?: boolean, preparationMinutes?: number | null,
-  barcode?: string, trackStock?: boolean, stockQuantity?: number, lowStockThreshold?: number, sortOrder?: number,
-  options: [{
-    name: string, type: "single" | "multiple", isRequired: boolean, minSelect: number, maxSelect: number,
-    values: [{ name: string, priceDelta: number, isAvailable?: boolean, trackStock?: boolean, stockQuantity?: number, lowStockThreshold?: number }]
+  categoryId?: uuid | null, newCategoryName?: string,   // no las dos; la nueva se crea en la misma transacción
+  name: string, description?: string | null, price: number, imageUrl?: string | null,
+  isAvailable?: boolean (true), isFeatured?: boolean (false), preparationMinutes?: number | null,
+  barcode?: string,                                     // si no viene: TKI-XXXXXXXXXX (en PUT se conserva)
+  trackStock?: boolean (true), stockQuantity?: number (0), lowStockThreshold?: number (5), sortOrder?: number,
+  options?: [{
+    id?: uuid,                                          // mandar el id para conservarlo al editar
+    name, type: "single" | "multiple", isRequired?: boolean, minSelect?: number, maxSelect?: number,
+    values: [{ id?: uuid, name, priceDelta?: number, isAvailable?, trackStock?, stockQuantity?, lowStockThreshold? }]  // ≥ 1
   }]
 }
+Product = { ...campos, category: { id, name, isActive } | null, isLowStock: boolean, options: [...con ids y sortOrder] }
 ```
 
-- Alta y edición en **una sola transacción**: hoy son 3 escrituras sueltas y un fallo intermedio deja opciones a medias.
-- `barcode` único por negocio, entre 4 y 64 caracteres; si no se manda, lo genera el default SQL (`TKI-XXXXXXXXXX`).
-- `maxSelect ≥ minSelect` y `maxSelect ≥ 1`.
+**Reglas implementadas:**
 
-### 7.3 Ingredientes (stock de insumos)
+- **Transacción:** alta y edición en **una sola transacción** (categoría nueva, producto, opciones y valores). Si algo falla no queda nada a medias. Hoy el front hace escrituras sueltas.
+- **Opciones con ids estables:** el PUT **sincroniza por id**. Actualiza lo que viene con id del mismo producto, crea lo nuevo y borra lo que no vino. Así los borradores de WhatsApp que guardan `option_value_ids` no se rompen al editar un producto. Ids de otro producto se ignoran y se crean nuevos.
+- **Min/max:** mismas reglas que el editor del front. Si es obligatorio, `minSelect ≥ 1`; si no, 0. Si es `single`, `maxSelect = 1`.
+- **Barcode:** único por negocio (409); el mismo código en otro negocio se permite.
+- **Imágenes:** solo propias del negocio (ver §4). Al reemplazar o borrar, se elimina el objeto viejo de R2.
+- **Stock bajo:** `isLowStock = trackStock && stockQuantity ≤ lowStockThreshold`.
+- **Búsqueda:** `search` busca por nombre (sin distinguir mayúsculas) o barcode exacto.
+- **Productos de otro negocio:** 404 en todas las rutas.
+
+### 7.3 Ingredientes
 
 | Método | Ruta | Auth | Body | Origen |
 | --- | --- | --- | --- | --- |
@@ -241,30 +263,43 @@ ProductInput = {
 | PATCH | `/ingredients/:id` | A | Mismos campos, opcionales | `update` |
 | DELETE | `/ingredients/:id` | A | — | `delete` |
 
+Nombre único por negocio (409). Cantidades con hasta 3 decimales. Cada ítem trae `isLowStock` (`quantity ≤ lowStockThreshold`).
+
 **Services (`catalog/`):**
 
-| Service | Funciones |
-| --- | --- |
-| `categories.service.ts` | `list`, `create`, `update`, `reorder` (una transacción), `remove` (borra la imagen de R2) |
-| `products.service.ts` | `list(filters)`, `get`, `create(input)`, `replace(id, input)`, `setAvailability`, `setStock`, `remove` |
-| `ingredients.service.ts` | `list`, `create`, `update`, `remove` |
+- `categories.service.ts`: `list`, `create`, `update`, `reorder`, `remove`.
+- `products.service.ts`: `list`, `get`, `create`, `replace`, `setAvailability`, `setStock`, `remove`, `syncOptions`.
+- `ingredients.service.ts`: `list`, `create`, `update`, `remove`.
 
 ---
 
-## 8. `uploads`
+## 8. `uploads` ✅ implementado (F2)
 
 | Método | Ruta | Auth | Body | Respuesta |
 | --- | --- | --- | --- | --- |
-| POST | `/uploads/presign` | A | `{ kind: "product" \| "category" \| "business-logo" \| "business-cover", contentType: "image/webp" \| "image/jpeg" \| "image/png" }` | `{ uploadUrl, key, publicUrl, expiresIn: 600 }` |
+| POST | `/uploads/presign` | A | `{ kind: "product" \| "category" \| "business-logo" \| "business-cover", contentType: "image/webp" \| "image/jpeg" \| "image/png" }` | `{ uploadUrl, method: "PUT", headers: { "Content-Type" }, key, publicUrl, expiresIn: 600 }` |
 
 **Origen:** `storage.from("product-images" | "business-assets").upload(...)`.
 
-**Services:**
+**Flujo:**
 
-- `presignImage(ctx, kind, contentType)`: arma la key `<business_id>/<carpeta>/<uuid>.<ext>` y firma un PUT.
-- `deleteObject(key)`: lo usan catalog y businesses al reemplazar imágenes.
+1. El front pide la firma.
+2. Hace `PUT uploadUrl` con el mismo `Content-Type`.
+3. Guarda `publicUrl` en el recurso (`imageUrl`, `logoUrl` o `coverUrl`).
 
-**Seguridad:** la key siempre la genera el backend con el `businessId` del contexto; el cliente no elige rutas.
+**Key:** `<business_id>/products|categories|business/logo|business/cover/<uuid>.<ext>`. La arma el backend con el negocio del contexto; el cliente no elige rutas.
+
+**Sin credenciales de R2** (dev/test) devuelve URLs de stub y no sube nada.
+
+### Nota de permisos para `staff` (RLS heredado)
+
+Algunas policies de Supabase no incluyen a los miembros sin rol de administración:
+
+- **Cupones:** solo ven los activos → por eso `GET /coupons` es solo para owner y admin.
+- **`whatsapp_integrations`:** solo owner y admin → en el checklist, `whatsappConnected` siempre sale `false` para staff.
+- **Horarios especiales, pagos y fidelización:** staff los ve solo si el negocio está activo (policy pública).
+
+Si hace falta que staff vea algo de esto, se ajusta con una migración de policies y su test.
 
 ---
 
@@ -448,7 +483,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | businesses | 10 |
 | settings | 10 |
 | coupons | 4 |
-| catalog | 16 |
+| catalog | 16 (15 + reorder) |
 | uploads | 1 |
 | orders | 9 |
 | customers | 2 |

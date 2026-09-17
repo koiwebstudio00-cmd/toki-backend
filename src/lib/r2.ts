@@ -102,7 +102,7 @@ export async function putObject(kind: BucketKind, key: string, body: Uint8Array,
 export async function deleteObjects(kind: BucketKind, keys: string[]): Promise<void> {
   if (keys.length === 0) return;
   if (!r2Enabled) {
-    console.log(`[r2-dev] delete no-op: ${keys.length} objeto(s)`);
+    if (config.NODE_ENV !== "test") console.log(`[r2-dev] delete no-op: ${keys.join(", ")}`);
     return;
   }
   try {
@@ -113,4 +113,26 @@ export async function deleteObjects(kind: BucketKind, keys: string[]): Promise<v
     // No frenar el flujo por un objeto huérfano.
     console.error("[r2] error borrando objetos:", err instanceof Error ? err.message : err);
   }
+}
+
+/** Assets por defecto que sirve el front (logo y portada iniciales del negocio). */
+export const DEFAULT_ASSET_PREFIX = "/defaults/";
+
+/**
+ * Una URL de imagen guardable para un negocio: vacía, un asset por defecto del
+ * front, o un objeto de NUESTRO bucket público dentro de la carpeta del negocio.
+ * Evita que se guarden URLs arbitrarias o de otro negocio.
+ */
+export function isAllowedImageUrl(url: string | null | undefined, businessId: string): boolean {
+  if (!url) return true;
+  if (url.startsWith(DEFAULT_ASSET_PREFIX)) return true;
+  const key = keyFromPublicUrl(url);
+  return key !== null && key.startsWith(`${businessId}/`) && !key.includes("..");
+}
+
+/** Borra del bucket público la imagen anterior si era nuestra y cambió. */
+export async function deleteReplacedImage(previous: string | null | undefined, next: string | null | undefined): Promise<void> {
+  if (!previous || previous === next) return;
+  const key = keyFromPublicUrl(previous);
+  if (key) await deleteObjects("public", [key]);
 }

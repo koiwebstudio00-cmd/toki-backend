@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | **F0. Base** ✅ 2026-09-17 | Repo `toki-api` con el esqueleto de back-lamelas (config, errores, logging, mailer, R2, Zernio, Dockerfile, tests). Prisma con `schema.prisma` + migraciones `0001`–`0003`. `withDb`, `requireAuth`, `requireBusiness`, `requireApiKey`, rate limit. Módulo `health`. Seed con 2 negocios. Tests RLS | `npm test` en verde contra `toki_test`; `GET /v1/health` local | 1-2 días |
 | **F1. Auth y cuenta** ✅ 2026-09-17 | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
-| **F2. Negocio y catálogo** | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
+| **F2. Negocio y catálogo** ✅ 2026-09-17 | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
 | **F3. Pedidos** | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
 | **F4. WhatsApp y agente** | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
 | **F5. Infra** | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
@@ -35,7 +35,18 @@
 - **Tests:** 60 en verde en total. 27 cubren el flujo completo de auth (registro, verificación, rotación y robo de refresh, logout, reset, `me`, perfil y RLS del perfil) y 2 la compatibilidad con hashes `$2a$` de Supabase.
 - **Para el front (F6):** agregar la ruta `/verify-email`; el reset ya existe en `/reset-password`.
 
-**Siguiente:** F2 (negocio y catálogo).
+**F2 terminada (2026-09-17).**
+
+- **Módulos:** `businesses` (10 rutas), `settings` (10), `coupons` (4), `catalog` (categorías 5, productos 7, ingredientes 4) y `uploads` (1).
+- **Tests:** 104 en verde en total. Los nuevos cubren permisos por rol, aislamiento entre negocios, validaciones, transacción del alta de productos, sincronización de opciones por id, imágenes propias y horarios especiales que cierran el negocio.
+- **Decisiones:**
+  - `GET /coupons` solo para owner y admin (por RLS).
+  - Onboarding crea `payment_settings`.
+  - Slugs reservados.
+  - Las opciones de producto conservan ids.
+- **Utilidades nuevas:** `lib/request.ts` (`businessScope`), `lib/validation.ts`, `lib/time.ts`, y `isAllowedImageUrl` / `deleteReplacedImage` en `lib/r2.ts`.
+
+**Siguiente:** F3 (pedidos, checkout público, tiempo real, clientes y dashboard).
 
 ## Orden y dependencias
 

@@ -89,3 +89,19 @@ export async function seedTwoBusinesses() {
 }
 
 export const authCtx = (u: TestUser) => ({ role: "authenticated" as const, userId: u.id, email: u.email });
+
+/** Negocio A con owner, admin y staff; negocio B con su owner. Para tests por HTTP. */
+export async function seedTeam() {
+  await truncateAll();
+  const owner = await createUser("owner@team.test");
+  const admin = await createUser("admin@team.test");
+  const staff = await createUser("staff@team.test");
+  const other = await createUser("owner@otro.test");
+  const businessId = await createBusiness(owner, "team-a");
+  const otherBusinessId = await createBusiness(other, "team-b");
+  await addMember(businessId, admin, "admin");
+  await addMember(businessId, staff, "staff");
+  return { owner, admin, staff, other, businessId, otherBusinessId };
+}
+
+export const bearer = (u: TestUser) => ({ authorization: `Bearer ${u.token}` });
