@@ -1,0 +1,715 @@
+// Generado desde la réplica de la base (docs/base-de-datos.md). Refleja 0001_baseline_supabase.
+// Reglas: Prisma NO es dueño de RLS, funciones ni triggers: esos cambios van en SQL dentro de migraciones.
+// Crear migraciones siempre con `prisma migrate dev --create-only` y revisar el SQL antes de aplicar.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_MIGRATE")
+  schemas   = ["auth", "public"]
+}
+
+enum business_role {
+  owner
+  admin
+  staff
+
+  @@schema("public")
+}
+
+enum order_status {
+  pending
+  confirmed
+  preparing
+  ready
+  out_for_delivery
+  delivered
+  cancelled
+
+  @@schema("public")
+}
+
+enum order_type {
+  delivery
+  takeaway
+
+  @@schema("public")
+}
+
+enum payment_method {
+  cash
+  transfer
+  mercadopago
+
+  @@schema("public")
+}
+
+enum payment_status {
+  pending
+  paid
+  failed
+  refunded
+
+  @@schema("public")
+}
+
+model BotFaq {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  question   String
+  answer     String
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("bot_faqs")
+  @@schema("public")
+}
+
+model BotSettings {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId      String   @unique @map("business_id") @db.Uuid
+  isEnabled       Boolean  @default(true) @map("is_enabled")
+  botName         String   @default("Toki") @map("bot_name")
+  tone            String   @default("friendly")
+  fallbackMessage String   @default("Te derivo con una persona del equipo para que pueda ayudarte.") @map("fallback_message")
+  handoffEnabled  Boolean  @default(true) @map("handoff_enabled")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("bot_settings")
+  @@schema("public")
+}
+
+model BusinessHour {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String    @map("business_id") @db.Uuid
+  dayOfWeek  Int       @map("day_of_week")
+  isOpen     Boolean   @default(true) @map("is_open")
+  opensAt    DateTime? @map("opens_at") @db.Time(6)
+  closesAt   DateTime? @map("closes_at") @db.Time(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  opensAt2   DateTime? @map("opens_at_2") @db.Time(6)
+  closesAt2  DateTime? @map("closes_at_2") @db.Time(6)
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, dayOfWeek])
+  @@map("business_hours")
+  @@schema("public")
+}
+
+model BusinessMember {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String        @map("business_id") @db.Uuid
+  userId     String        @map("user_id") @db.Uuid
+  role       business_role @default(owner)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId], map: "idx_business_members_user_id")
+  @@map("business_members")
+  @@schema("public")
+}
+
+model BusinessSpecialHour {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String    @map("business_id") @db.Uuid
+  date       DateTime  @db.Date
+  isClosed   Boolean   @default(true) @map("is_closed")
+  opensAt    DateTime? @map("opens_at") @db.Time(6)
+  closesAt   DateTime? @map("closes_at") @db.Time(6)
+  note       String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, date])
+  @@index([businessId, date], map: "idx_special_hours_business_date")
+  @@map("business_special_hours")
+  @@schema("public")
+}
+
+model Business {
+  id                        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                      String
+  slug                      String                   @unique
+  description               String?
+  businessType              String?                  @map("business_type")
+  logoUrl                   String?                  @map("logo_url")
+  coverUrl                  String?                  @map("cover_url")
+  phone                     String?
+  whatsappPhone             String?                  @map("whatsapp_phone")
+  address                   String?
+  city                      String?
+  country                   String                   @default("Argentina")
+  currency                  String                   @default("ARS")
+  timezone                  String                   @default("America/Argentina/Buenos_Aires")
+  estimatedDeliveryMinutes  Int                      @default(45) @map("estimated_delivery_minutes")
+  minimumOrderAmount        Decimal                  @default(0) @map("minimum_order_amount") @db.Decimal(12, 2)
+  deliveryFee               Decimal                  @default(0) @map("delivery_fee") @db.Decimal(12, 2)
+  isActive                  Boolean                  @default(true) @map("is_active")
+  manualStatus              String                   @default("auto") @map("manual_status")
+  createdAt                 DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                 @default(now()) @map("updated_at") @db.Timestamptz(6)
+  botFaqs                   BotFaq[]
+  botSettings               BotSettings?
+  businessHours             BusinessHour[]
+  businessMembers           BusinessMember[]
+  businessSpecialHours      BusinessSpecialHour[]
+  categories                Category[]
+  coupons                   Coupon[]
+  customerAddresses         CustomerAddress[]
+  customers                 Customer[]
+  inventoryIngredients      InventoryIngredient[]
+  loyaltySettings           LoyaltySettings?
+  orderItemOptions          OrderItemOption[]
+  orderItems                OrderItem[]
+  orderPaymentProofs        OrderPaymentProof[]
+  orderStatusHistoryEntries OrderStatusHistory[]
+  orders                    Order[]
+  paymentSettings           PaymentSettings?
+  payments                  Payment[]
+  productOptionValues       ProductOptionValue[]
+  productOptions            ProductOption[]
+  products                  Product[]
+  whatsappConversations     WhatsappConversation[]
+  whatsappIntegration       WhatsappIntegration?
+  whatsappMessages          WhatsappMessage[]
+  whatsappOrderDraftItems   WhatsappOrderDraftItem[]
+  whatsappOrderDrafts       WhatsappOrderDraft[]
+
+  @@index([slug], map: "idx_businesses_slug")
+  @@map("businesses")
+  @@schema("public")
+}
+
+model Category {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  name        String
+  description String?
+  sortOrder   Int       @default(0) @map("sort_order")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  imageUrl    String?   @map("image_url")
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products    Product[]
+
+  @@index([businessId], map: "idx_categories_business_id")
+  @@map("categories")
+  @@schema("public")
+}
+
+model Coupon {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId         String    @map("business_id") @db.Uuid
+  code               String
+  description        String?
+  discountType       String    @map("discount_type")
+  discountValue      Decimal   @map("discount_value") @db.Decimal(12, 2)
+  minimumOrderAmount Decimal   @default(0) @map("minimum_order_amount") @db.Decimal(12, 2)
+  startsAt           DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt             DateTime? @map("ends_at") @db.Timestamptz(6)
+  usageLimit         Int?      @map("usage_limit")
+  usedCount          Int       @default(0) @map("used_count")
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business           Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orders             Order[]
+
+  @@unique([businessId, code])
+  @@index([businessId, code], map: "idx_coupons_business_code")
+  @@map("coupons")
+  @@schema("public")
+}
+
+model CustomerAddress {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  label      String   @default("Principal")
+  street     String
+  details    String?
+  city       String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("customer_addresses")
+  @@schema("public")
+}
+
+model Customer {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId            String                 @map("business_id") @db.Uuid
+  name                  String
+  phone                 String
+  email                 String?
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime               @default(now()) @map("updated_at") @db.Timestamptz(6)
+  loyaltyPoints         Int                    @default(0) @map("loyalty_points")
+  totalSpent            Decimal                @default(0) @map("total_spent") @db.Decimal(12, 2)
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  addresses             CustomerAddress[]
+  orders                Order[]
+  whatsappConversations WhatsappConversation[]
+
+  @@unique([businessId, phone])
+  @@index([businessId, phone], map: "idx_customers_business_phone")
+  @@map("customers")
+  @@schema("public")
+}
+
+model InventoryIngredient {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId        String   @map("business_id") @db.Uuid
+  name              String
+  quantity          Decimal  @default(0) @db.Decimal(12, 3)
+  unit              String   @default("kg")
+  lowStockThreshold Decimal  @default(0) @map("low_stock_threshold") @db.Decimal(12, 3)
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business          Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, name])
+  @@index([businessId, quantity, lowStockThreshold], map: "idx_inventory_ingredients_business_stock")
+  @@map("inventory_ingredients")
+  @@schema("public")
+}
+
+model LoyaltySettings {
+  businessId        String   @id @map("business_id") @db.Uuid
+  isEnabled         Boolean  @default(false) @map("is_enabled")
+  pointsPerCurrency Decimal  @default(0.01) @map("points_per_currency") @db.Decimal(12, 4)
+  pointsPerOrder    Int      @default(0) @map("points_per_order")
+  redeemRate        Decimal  @default(10) @map("redeem_rate") @db.Decimal(12, 2)
+  minPointsToRedeem Int      @default(100) @map("min_points_to_redeem")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business          Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("loyalty_settings")
+  @@schema("public")
+}
+
+model OrderItemOption {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  orderItemId String    @map("order_item_id") @db.Uuid
+  optionName  String    @map("option_name")
+  valueName   String    @map("value_name")
+  priceDelta  Decimal   @default(0) @map("price_delta") @db.Decimal(12, 2)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@map("order_item_options")
+  @@schema("public")
+}
+
+model OrderItem {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId  String            @map("business_id") @db.Uuid
+  orderId     String            @map("order_id") @db.Uuid
+  productId   String?           @map("product_id") @db.Uuid
+  productName String            @map("product_name")
+  quantity    Int
+  unitPrice   Decimal           @map("unit_price") @db.Decimal(12, 2)
+  totalPrice  Decimal           @map("total_price") @db.Decimal(12, 2)
+  notes       String?
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  business    Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product     Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  options     OrderItemOption[]
+
+  @@index([orderId], map: "idx_order_items_order_id")
+  @@map("order_items")
+  @@schema("public")
+}
+
+model OrderPaymentProof {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId     String                @map("business_id") @db.Uuid
+  orderId        String                @map("order_id") @db.Uuid
+  conversationId String?               @map("conversation_id") @db.Uuid
+  storagePath    String                @map("storage_path")
+  mediaType      String                @default("image") @map("media_type")
+  status         String                @default("pending")
+  reviewedAt     DateTime?             @map("reviewed_at") @db.Timestamptz(6)
+  reviewedBy     String?               @map("reviewed_by") @db.Uuid
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  business       Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation   WhatsappConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reviewer       Profile?              @relation(fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([businessId], map: "idx_order_payment_proofs_business_id")
+  @@index([orderId, createdAt], map: "idx_order_payment_proofs_order_id")
+  @@map("order_payment_proofs")
+  @@schema("public")
+}
+
+model OrderStatusHistory {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId    String        @map("business_id") @db.Uuid
+  orderId       String        @map("order_id") @db.Uuid
+  fromStatus    order_status? @map("from_status")
+  toStatus      order_status  @map("to_status")
+  changedBy     String?       @map("changed_by") @db.Uuid
+  note          String?
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  changedByUser User?         @relation(fields: [changedBy], references: [id], onDelete: SetNull)
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt], map: "idx_order_history_order_id")
+  @@map("order_status_history")
+  @@schema("public")
+}
+
+model Order {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId             String                @map("business_id") @db.Uuid
+  customerId             String?               @map("customer_id") @db.Uuid
+  orderCode              String                @unique @map("order_code")
+  status                 order_status          @default(pending)
+  orderType              order_type            @default(delivery) @map("order_type")
+  customerName           String                @map("customer_name")
+  customerPhone          String                @map("customer_phone")
+  deliveryAddress        String?               @map("delivery_address")
+  deliveryNotes          String?               @map("delivery_notes")
+  notes                  String?
+  subtotal               Decimal               @default(0) @db.Decimal(12, 2)
+  deliveryFee            Decimal               @default(0) @map("delivery_fee") @db.Decimal(12, 2)
+  discountTotal          Decimal               @default(0) @map("discount_total") @db.Decimal(12, 2)
+  total                  Decimal               @default(0) @db.Decimal(12, 2)
+  paymentMethod          payment_method        @default(cash) @map("payment_method")
+  paymentStatus          payment_status        @default(pending) @map("payment_status")
+  source                 String                @default("web")
+  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  couponId               String?               @map("coupon_id") @db.Uuid
+  couponCode             String?               @map("coupon_code")
+  loyaltyPointsEarned    Int                   @default(0) @map("loyalty_points_earned")
+  loyaltyPointsRedeemed  Int                   @default(0) @map("loyalty_points_redeemed")
+  whatsappConversationId String?               @map("whatsapp_conversation_id") @db.Uuid
+  business               Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  coupon                 Coupon?               @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  customer               Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  whatsappConversation   WhatsappConversation? @relation(fields: [whatsappConversationId], references: [id], onDelete: SetNull)
+  items                  OrderItem[]
+  paymentProofs          OrderPaymentProof[]
+  statusHistory          OrderStatusHistory[]
+  payments               Payment[]
+  whatsappDrafts         WhatsappOrderDraft[]
+
+  @@index([orderCode], map: "idx_orders_order_code")
+  @@index([whatsappConversationId], map: "idx_orders_whatsapp_conversation_id")
+  @@index([businessId, status], map: "idx_orders_business_status")
+  @@index([businessId, createdAt(sort: Desc)], map: "idx_orders_business_created")
+  @@index([couponId], map: "idx_orders_coupon_id")
+  @@map("orders")
+  @@schema("public")
+}
+
+model PaymentSettings {
+  businessId         String   @id @map("business_id") @db.Uuid
+  cashEnabled        Boolean  @default(true) @map("cash_enabled")
+  transferEnabled    Boolean  @default(true) @map("transfer_enabled")
+  transferCbu        String?  @map("transfer_cbu")
+  transferAlias      String?  @map("transfer_alias")
+  transferHolder     String?  @map("transfer_holder")
+  mercadopagoEnabled Boolean  @default(false) @map("mercadopago_enabled")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  transferBank       String?  @map("transfer_bank")
+  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("payment_settings")
+  @@schema("public")
+}
+
+model Payment {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId        String         @map("business_id") @db.Uuid
+  orderId           String         @map("order_id") @db.Uuid
+  provider          String         @default("manual")
+  status            payment_status @default(pending)
+  amount            Decimal        @db.Decimal(12, 2)
+  externalPaymentId String?        @map("external_payment_id")
+  metadata          Json?
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business          Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order             Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+  @@schema("public")
+}
+
+model ProductOptionValue {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId        String        @map("business_id") @db.Uuid
+  optionId          String        @map("option_id") @db.Uuid
+  name              String
+  priceDelta        Decimal       @default(0) @map("price_delta") @db.Decimal(12, 2)
+  isAvailable       Boolean       @default(true) @map("is_available")
+  sortOrder         Int           @default(0) @map("sort_order")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  trackStock        Boolean       @default(false) @map("track_stock")
+  stockQuantity     Int           @default(0) @map("stock_quantity")
+  lowStockThreshold Int           @default(5) @map("low_stock_threshold")
+  business          Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  option            ProductOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, trackStock, stockQuantity], map: "idx_option_values_low_stock")
+  @@index([optionId], map: "idx_option_values_option_id")
+  @@map("product_option_values")
+  @@schema("public")
+}
+
+model ProductOption {
+  id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String               @map("business_id") @db.Uuid
+  productId  String               @map("product_id") @db.Uuid
+  name       String
+  type       String               @default("single")
+  isRequired Boolean              @default(false) @map("is_required")
+  minSelect  Int                  @default(0) @map("min_select")
+  maxSelect  Int                  @default(1) @map("max_select")
+  sortOrder  Int                  @default(0) @map("sort_order")
+  createdAt  DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business   Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product    Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values     ProductOptionValue[]
+
+  @@index([productId], map: "idx_product_options_product_id")
+  @@map("product_options")
+  @@schema("public")
+}
+
+model Product {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId         String                   @map("business_id") @db.Uuid
+  categoryId         String?                  @map("category_id") @db.Uuid
+  name               String
+  description        String?
+  price              Decimal                  @db.Decimal(12, 2)
+  imageUrl           String?                  @map("image_url")
+  isAvailable        Boolean                  @default(true) @map("is_available")
+  isFeatured         Boolean                  @default(false) @map("is_featured")
+  preparationMinutes Int?                     @map("preparation_minutes")
+  sortOrder          Int                      @default(0) @map("sort_order")
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                 @default(now()) @map("updated_at") @db.Timestamptz(6)
+  barcode            String                   @default(dbgenerated("('TKI-'::text || upper(substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 10)))"))
+  trackStock         Boolean                  @default(false) @map("track_stock")
+  stockQuantity      Int                      @default(0) @map("stock_quantity")
+  lowStockThreshold  Int                      @default(5) @map("low_stock_threshold")
+  business           Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category           Category?                @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  orderItems         OrderItem[]
+  options            ProductOption[]
+  whatsappDraftItems WhatsappOrderDraftItem[]
+
+  @@unique([businessId, barcode])
+  @@index([businessId, trackStock, stockQuantity], map: "idx_products_low_stock")
+  @@index([categoryId], map: "idx_products_category_id")
+  @@index([businessId], map: "idx_products_business_id")
+  @@map("products")
+  @@schema("public")
+}
+
+model Profile {
+  id                    String              @id @db.Uuid
+  fullName              String?             @map("full_name")
+  avatarUrl             String?             @map("avatar_url")
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  phone                 String?
+  user                  User                @relation(fields: [id], references: [id], onDelete: Cascade)
+  reviewedPaymentProofs OrderPaymentProof[]
+
+  @@map("profiles")
+  @@schema("public")
+}
+
+model WhatsappConversation {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId          String              @map("business_id") @db.Uuid
+  customerId          String?             @map("customer_id") @db.Uuid
+  phone               String?
+  status              String              @default("open")
+  lastMessageAt       DateTime?           @map("last_message_at") @db.Timestamptz(6)
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  contactId           String              @map("contact_id")
+  handoffReason       String?             @map("handoff_reason")
+  business            Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer            Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  paymentProofs       OrderPaymentProof[]
+  orders              Order[]
+  messages            WhatsappMessage[]
+  whatsappOrderDrafts WhatsappOrderDraft?
+
+  @@unique([businessId, contactId])
+  @@index([businessId, phone], map: "idx_whatsapp_conversations_business_phone")
+  @@map("whatsapp_conversations")
+  @@schema("public")
+}
+
+model WhatsappIntegration {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId           String   @unique @map("business_id") @db.Uuid
+  phoneNumber          String?  @map("phone_number")
+  phoneNumberId        String?  @unique @map("phone_number_id")
+  wabaId               String?  @map("waba_id")
+  accessTokenEncrypted String?  @map("access_token_encrypted")
+  verifyToken          String?  @map("verify_token")
+  isActive             Boolean  @default(false) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  provider             String   @default("meta")
+  providerExternalId   String?  @map("provider_external_id")
+  providerMetadata     Json     @default("{}") @map("provider_metadata")
+  business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_integrations")
+  @@schema("public")
+}
+
+model WhatsappMessage {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId        String               @map("business_id") @db.Uuid
+  conversationId    String               @map("conversation_id") @db.Uuid
+  direction         String
+  messageType       String               @default("text") @map("message_type")
+  content           String?
+  rawPayload        Json?                @map("raw_payload")
+  aiIntent          String?              @map("ai_intent")
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  providerMessageId String?              @map("provider_message_id")
+  business          Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation      WhatsappConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt], map: "idx_whatsapp_messages_conversation_id")
+  @@map("whatsapp_messages")
+  @@schema("public")
+}
+
+model WhatsappOrderDraftItem {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId     String             @map("business_id") @db.Uuid
+  draftId        String             @map("draft_id") @db.Uuid
+  productId      String             @map("product_id") @db.Uuid
+  productName    String             @map("product_name")
+  quantity       Int
+  unitPrice      Decimal            @map("unit_price") @db.Decimal(12, 2)
+  totalPrice     Decimal            @map("total_price") @db.Decimal(12, 2)
+  notes          String?
+  optionValueIds String[]           @default([]) @map("option_value_ids") @db.Uuid
+  options        Json               @default("[]")
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  business       Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  draft          WhatsappOrderDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  product        Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([draftId, createdAt], map: "idx_whatsapp_order_draft_items_draft_id")
+  @@map("whatsapp_order_draft_items")
+  @@schema("public")
+}
+
+model WhatsappOrderDraft {
+  id              String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId      String                   @map("business_id") @db.Uuid
+  conversationId  String                   @unique @map("conversation_id") @db.Uuid
+  status          String                   @default("open")
+  customerName    String?                  @map("customer_name")
+  orderType       order_type?              @map("order_type")
+  deliveryAddress String?                  @map("delivery_address")
+  paymentMethod   payment_method?          @map("payment_method")
+  notes           String?
+  orderId         String?                  @map("order_id") @db.Uuid
+  createdAt       DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                 @default(now()) @map("updated_at") @db.Timestamptz(6)
+  business        Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation    WhatsappConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  order           Order?                   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  items           WhatsappOrderDraftItem[]
+
+  @@map("whatsapp_order_drafts")
+  @@schema("public")
+}
+
+model User {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email              String               @unique @db.Citext
+  passwordHash       String               @map("password_hash")
+  emailVerifiedAt    DateTime?            @map("email_verified_at") @db.Timestamptz(6)
+  rawUserMetaData    Json                 @default("{}") @map("raw_user_meta_data")
+  lastLoginAt        DateTime?            @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  members            BusinessMember[]
+  orderStatusChanges OrderStatusHistory[]
+  profile            Profile?
+  refreshTokens      RefreshToken[]
+  emailTokens        EmailToken[]
+
+  @@map("users")
+  @@schema("auth")
+}
+
+model RefreshToken {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String         @map("user_id") @db.Uuid
+  tokenHash   String         @unique @map("token_hash")
+  userAgent   String?        @map("user_agent")
+  expiresAt   DateTime       @map("expires_at") @db.Timestamptz(6)
+  revokedAt   DateTime?      @map("revoked_at") @db.Timestamptz(6)
+  replacedBy  String?        @map("replaced_by") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacement RefreshToken?  @relation("RefreshTokenRotation", fields: [replacedBy], references: [id], onDelete: SetNull)
+  replaces    RefreshToken[] @relation("RefreshTokenRotation")
+
+  @@map("refresh_tokens")
+  @@schema("auth")
+}
+
+model EmailToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  purpose   String // verify_email | reset_password (check en SQL)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_tokens")
+  @@schema("auth")
+}
+
+// Índices parciales no representables en Prisma (viven solo en SQL):
+//   CREATE UNIQUE INDEX idx_whatsapp_integrations_provider_external_id ON public.whatsapp_integrations USING btree (provider, provider_external_id) WHERE (provider_external_id IS NOT NULL)
+//   CREATE UNIQUE INDEX uq_whatsapp_messages_provider_message_id ON public.whatsapp_messages USING btree (business_id, provider_message_id) WHERE (provider_message_id IS NOT NULL)
+//   CREATE INDEX idx_refresh_tokens_user ON auth.refresh_tokens (user_id) WHERE revoked_at IS NULL
+//   CREATE INDEX idx_email_tokens_user_purpose ON auth.email_tokens (user_id, purpose) WHERE used_at IS NULL
