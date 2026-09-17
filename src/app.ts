@@ -4,6 +4,8 @@ import helmet from "helmet";
 import { config, corsOrigins } from "./config.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requestLogger } from "./middleware/logging.js";
+import { accountRoutes } from "./modules/account/routes.js";
+import { authRoutes } from "./modules/auth/routes.js";
 import { healthRoutes } from "./modules/health/routes.js";
 
 export function buildApp() {
@@ -27,7 +29,9 @@ export function buildApp() {
 
   const v1 = express.Router();
   v1.use(healthRoutes);
-  // Módulos de F1 en adelante: auth, account, businesses, settings, coupons,
+  v1.use(authRoutes);
+  v1.use(accountRoutes);
+  // Próximas fases: businesses, settings, coupons,
   // catalog, uploads, orders, customers, dashboard, whatsapp, public, agent.
   app.use("/v1", v1);
 

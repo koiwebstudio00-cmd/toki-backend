@@ -1,7 +1,9 @@
 import bcrypt from "bcrypt";
+import { config } from "../config.js";
 
 // Costo 12. Los hashes migrados de Supabase Auth ($2a$10$...) siguen validando.
-const ROUNDS = 12;
+// En tests, costo 4: bcrypt 12 hace que la suite de auth tarde ~10 s de más.
+const ROUNDS = config.NODE_ENV === "test" ? 4 : 12;
 
 export function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, ROUNDS);

@@ -9,7 +9,7 @@
 | Fase | Contenido | Entregable | Estimación |
 | --- | --- | --- | --- |
 | **F0. Base** ✅ 2026-09-17 | Repo `toki-api` con el esqueleto de back-lamelas (config, errores, logging, mailer, R2, Zernio, Dockerfile, tests). Prisma con `schema.prisma` + migraciones `0001`–`0003`. `withDb`, `requireAuth`, `requireBusiness`, `requireApiKey`, rate limit. Módulo `health`. Seed con 2 negocios. Tests RLS | `npm test` en verde contra `toki_test`; `GET /v1/health` local | 1-2 días |
-| **F1. Auth y cuenta** | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
+| **F1. Auth y cuenta** ✅ 2026-09-17 | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
 | **F2. Negocio y catálogo** | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
 | **F3. Pedidos** | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
 | **F4. WhatsApp y agente** | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
@@ -29,7 +29,13 @@
 - **Verificado:** lint, typecheck, build; arranque y cierre limpio del server.
 - **Pendiente en la Mac:** `npm install`, `npm run db:migrate:deploy` con Prisma real (en el sandbox se aplicaron con `MIGRATE_WITH=sql`), `npm run test:prepare && npm test`.
 
-**Siguiente:** F1 (auth y cuenta).
+**F1 terminada (2026-09-17).**
+
+- **Módulos:** `auth` (9 rutas) y `account` (2 rutas), con templates de email (verificación y reset, texto + HTML).
+- **Tests:** 60 en verde en total. 27 cubren el flujo completo de auth (registro, verificación, rotación y robo de refresh, logout, reset, `me`, perfil y RLS del perfil) y 2 la compatibilidad con hashes `$2a$` de Supabase.
+- **Para el front (F6):** agregar la ruta `/verify-email`; el reset ya existe en `/reset-password`.
+
+**Siguiente:** F2 (negocio y catálogo).
 
 ## Orden y dependencias
 

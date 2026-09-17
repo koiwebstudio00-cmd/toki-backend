@@ -45,52 +45,70 @@
 
 ---
 
-## 2. `auth`
+## 2. `auth` ✅ implementado (F1)
 
 | Método | Ruta | Auth | Body | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/auth/register` | — | `{ fullName, email, password }` (≥ 8) | `201 { ok: true }` + email de verificación | `supabase.auth.signUp` |
+| POST | `/auth/register` | — | `{ fullName, email, password }` (8 caracteres a 72 bytes) | `201 { ok, message }` + email de verificación | `supabase.auth.signUp` |
 | POST | `/auth/verify-email` | — | `{ token }` | `{ ok: true }` | Link de confirmación de Supabase |
-| POST | `/auth/resend-verification` | — | `{ email }` | Siempre `{ ok: true }` | — |
-| POST | `/auth/login` | — | `{ email, password }` | `{ accessToken, refreshToken, expiresIn, user, businesses: [{ id, name, slug, role }] }` | `signInWithPassword` |
-| POST | `/auth/refresh` | — | `{ refreshToken }` | Mismo shape que login (tokens nuevos) | Refresh automático de supabase-js |
-| POST | `/auth/logout` | U | `{ refreshToken, all?: boolean }` | `{ ok: true }` | `signOut` |
-| POST | `/auth/forgot-password` | — | `{ email }` | Siempre `{ ok: true }` | `resetPasswordForEmail` |
-| POST | `/auth/reset-password` | — | `{ token, password }` | `{ ok: true }` (revoca todas las sesiones) | `updateUser({ password })` |
-| GET | `/auth/me` | U | — | `{ user: { id, email }, profile: { fullName, phone }, businesses: [...], currentBusiness }` | `lib/auth.tsx` (profiles + business_members + businesses) |
+| POST | `/auth/resend-verification` | — | `{ email }` | Siempre `{ ok, message }` | — |
+| POST | `/auth/login` | — | `{ email, password }` | `Session` | `signInWithPassword` |
+| POST | `/auth/refresh` | — | `{ refreshToken }` | `Session` (tokens nuevos) | Refresh automático de supabase-js |
+| POST | `/auth/logout` | U | `{ refreshToken?, all?: boolean }` | `{ ok: true }` | `signOut` |
+| POST | `/auth/forgot-password` | — | `{ email }` | Siempre `{ ok, message }` | `resetPasswordForEmail` |
+| POST | `/auth/reset-password` | — | `{ token, password }` | `{ ok: true }` | `updateUser({ password })` |
+| GET | `/auth/me` | U | Header opcional `X-Business-Id` | `{ user: { id, email, emailVerified }, profile: { fullName, phone, avatarUrl }, businesses: SessionBusiness[], currentBusiness: SessionBusiness \| null }` | `lib/auth.tsx` |
 
-**Rate limit:** `login`, `register`, `forgot-password` y `resend-verification`: 5/min por IP.
+```ts
+Session = {
+  accessToken: string,          // JWT HS256, 15 min → header Authorization: Bearer
+  refreshToken: string,         // opaco (64 hex), 30 días, de un solo uso
+  expiresIn: 900,
+  user: { id, email, fullName: string | null, emailVerified: true },
+  businesses: SessionBusiness[]
+}
+SessionBusiness = { id, name, slug, logoUrl: string | null, isActive: boolean, role: "owner" | "admin" | "staff" }
+```
 
-**Errores específicos:**
+**Links de los emails** (el front tiene que tener estas rutas):
 
-- `login` con email sin verificar → 403 `EMAIL_NOT_VERIFIED`.
-- Credenciales inválidas → 401 genérico (no revela si el email existe).
-- Refresh revocado reutilizado → 401 y revocación de toda la cadena.
+- `${FRONT_URL}/verify-email?token=...` → `POST /auth/verify-email`
+- `${FRONT_URL}/reset-password?token=...` → `POST /auth/reset-password`
 
-**Services (`auth/service.ts`):**
+**Rate limit:** 5/min por IP en `register`, `login`, `resend-verification`, `forgot-password` y `reset-password`.
 
-| Función | Qué hace |
+**Errores:**
+
+| Caso | Respuesta |
 | --- | --- |
-| `register(input)` | Normaliza el email; si existe y está verificado → 409; si existe sin verificar → reenvía verificación. Crea `auth.users` con bcrypt y `raw_user_meta_data.full_name` (el trigger crea `profiles`). Emite token `verify_email` (24 h). Envía el email después del commit |
-| `verifyEmail(token)` | Valida hash, vencimiento y uso; marca `email_verified_at` y `used_at` |
-| `resendVerification(email)` | Invalida tokens previos y emite uno nuevo si corresponde |
-| `login(email, password, userAgent)` | Compara bcrypt, exige verificación, emite access + refresh, actualiza `last_login_at` |
-| `refresh(token, userAgent)` | Rota el token; si ya estaba revocado, revoca la cadena |
-| `logout(token, all, userId)` | Revoca uno o todos los refresh del usuario |
-| `forgotPassword(email)` | Emite token `reset_password` (1 h) y envía email |
-| `resetPassword(token, password)` | Cambia el hash, marca el token usado y revoca sesiones |
-| `me(userId)` | Perfil + membresías con nombre y slug del negocio |
+| Email o contraseña incorrectos (existan o no) | 401 `UNAUTHORIZED` "Email o contraseña incorrectos." |
+| Contraseña correcta pero email sin verificar | 403 `EMAIL_NOT_VERIFIED` |
+| Registro con email ya verificado | 409 `CONFLICT` |
+| Token de email inválido, usado, vencido o de otro propósito | 400 `VALIDATION_ERROR` "El link no es válido o ya venció. Pedí uno nuevo." |
+| Refresh inválido, vencido, revocado o de un usuario sin verificar | 401 |
 
-**Contexto BD:** `service_role` (las tablas de `auth` no son accesibles para `authenticated`).
+**Reglas implementadas:**
+
+- **Re-registrar una cuenta sin verificar** no pisa la contraseña (quien registra podría no ser el dueño del email): reenvía el link e invalida el anterior.
+- **Pedir un link nuevo** (verificación o reset) invalida los anteriores del mismo tipo.
+- **Refresh rotativo:** cada uso revoca el token y emite uno nuevo (`replaced_by`). Reusar un token rotado **dentro de 10 s** da 401 (dos pestañas refrescando a la vez). **Pasados 10 s**, se toma como robo y revoca todas las sesiones del usuario.
+- **Reset de contraseña:** revoca todas las sesiones y marca el email como verificado (usar el link prueba acceso al email).
+- **Logout:** solo revoca tokens propios.
+- **Login:** con email inexistente igual se compara contra un hash de referencia, para no revelar qué emails existen por tiempo de respuesta.
+- **Emails:** se envían después del commit, nunca dentro de la transacción.
+
+**Services (`auth/service.ts`):** `register`, `verifyEmail`, `resendVerification`, `login`, `refresh`, `logout`, `forgotPassword`, `resetPassword`, `me`. **Repo (`auth/repo.ts`):** usuarios, tokens de email (consumo atómico), refresh tokens, membresías y perfil.
+
+**Contexto BD:** `service_role` para `auth.*`; `authenticated` para membresías y perfil.
 
 ---
 
-## 3. `account`
+## 3. `account` ✅ implementado (F1)
 
 | Método | Ruta | Auth | Body | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/me/profile` | U | — | `{ fullName, phone, email }` | `AccountPage`: `profiles.select` |
-| PATCH | `/me/profile` | U | `{ fullName?, phone? }` (phone ≤ 40) | Perfil actualizado | `profiles.update` |
+| GET | `/me/profile` | U | — | `{ fullName, phone, avatarUrl, email }` | `AccountPage`: `profiles.select` |
+| PATCH | `/me/profile` | U | `{ fullName?, phone? }` (al menos uno; nombre 2-120; teléfono ≤ 40; `""` borra el teléfono) | Perfil actualizado | `profiles.update` |
 
 **Services:** `getProfile(ctx)` y `updateProfile(ctx, input)`. RLS: `profiles own select/update`.
 
