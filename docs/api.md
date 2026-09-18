@@ -303,11 +303,11 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 
 ---
 
-## 9. `orders`
+## 9. `orders` ✅ implementado (F3)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | Pedidos con items, opciones, historial y pagos | `OrdersPage` |
+| GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | `{ data: [pedido con items, opciones, historial y pagos], meta: { page, limit, total, pages } }` | `OrdersPage` |
 | GET | `/orders/:id` | M | — | Pedido completo (+ `barcode` de cada producto) | `refreshOrder` |
 | PATCH | `/orders/:id/status` | M | `{ status, note? }` | Pedido | RPC `update_order_status` |
 | POST | `/orders/:id/mark-paid` | M | — | Pedido | RPC `mark_order_paid` |
@@ -334,25 +334,27 @@ ManualSaleInput = {
 | `get(ctx, id)` | Pedido con relaciones; 404 si RLS lo oculta |
 | `changeStatus(ctx, id, status, note)` | `update_order_status` (valida membresía y escribe historial) |
 | `markPaid(ctx, id)` | `mark_order_paid` |
-| `createManualSale(ctx, input)` | `create_manual_sale` (stock, descuento, medio de pago, código) |
+| `createManualSale(ctx, input)` | Resuelve nombres y recargos de cada opción contra la base y llama a `create_manual_sale`. **El mostrador manda ids, nunca precios** |
 | `listPaymentProofs(ctx, orderId)` | Con URLs firmadas de `toki-private` |
 | `reviewPaymentProof(ctx, id, status)` | Setea `status`, `reviewed_at` y `reviewed_by`. **No** marca el pedido pagado |
 | `issueEventsTicket(ctx)` / `openEventStream(ticket, res)` | Ticket de un uso y suscripción al hub de `lib/realtime.ts` |
 
 ---
 
-## 10. `customers`
+## 10. `customers` ✅ implementado (F3)
 
 | Método | Ruta | Auth | Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/customers` | M | `?search=&page=&limit=` | `{ data: [{ id, name, phone, email, createdAt, addresses, ordersCount, totalSpent, lastOrderAt, loyaltyPoints }], meta }` | `CustomersPage` (hoy agrega en el navegador) |
+| GET | `/customers` | M | `?search=&page=&limit=` | `{ data: [{ id, name, phone, email, createdAt, ordersCount, ordersTotal, totalSpent, lastOrderAt, loyaltyPoints }], meta }` | `CustomersPage` (hoy agrega en el navegador) |
 | GET | `/customers/:id` | M | — | Cliente + direcciones + últimos 20 pedidos | — |
 
-**Services:** `list(ctx, filters)`, con agregados en SQL (`count`, `sum`, `max`), y `get(ctx, id)`.
+**Services:** `list(ctx, filters)`, con agregados en SQL (`count`, `sum`, `max`), y `get(ctx, id)` (direcciones + últimos 20 pedidos).
+
+`totalSpent` es el acumulado que mantiene `persist_order`; `ordersTotal` es la suma de los pedidos vigentes. No siempre coinciden (pedidos cancelados, ventas de mostrador anteriores al cliente) y el panel muestra los dos.
 
 ---
 
-## 11. `dashboard`
+## 11. `dashboard` ✅ implementado (F3)
 
 | Método | Ruta | Auth | Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
@@ -390,7 +392,7 @@ ManualSaleInput = {
 
 ---
 
-## 13. `public` (clientes finales)
+## 13. `public` (clientes finales) ✅ implementado (F3)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |

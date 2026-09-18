@@ -11,7 +11,7 @@
 | **F0. Base** ✅ 2026-09-17 | Repo `toki-api` con el esqueleto de back-lamelas (config, errores, logging, mailer, R2, Zernio, Dockerfile, tests). Prisma con `schema.prisma` + migraciones `0001`–`0003`. `withDb`, `requireAuth`, `requireBusiness`, `requireApiKey`, rate limit. Módulo `health`. Seed con 2 negocios. Tests RLS | `npm test` en verde contra `toki_test`; `GET /v1/health` local | 1-2 días |
 | **F1. Auth y cuenta** ✅ 2026-09-17 | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
 | **F2. Negocio y catálogo** ✅ 2026-09-17 | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
-| **F3. Pedidos** | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
+| **F3. Pedidos** ✅ 2026-09-18 | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
 | **F4. WhatsApp y agente** | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
 | **F5. Infra** | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
 | **F6. Front** | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
@@ -46,7 +46,19 @@
   - Las opciones de producto conservan ids.
 - **Utilidades nuevas:** `lib/request.ts` (`businessScope`), `lib/validation.ts`, `lib/time.ts`, y `isAllowedImageUrl` / `deleteReplacedImage` en `lib/r2.ts`.
 
-**Siguiente:** F3 (pedidos, checkout público, tiempo real, clientes y dashboard).
+**F3 terminada (2026-09-18).**
+
+- **Módulos:** `public` (5 rutas), `orders` (9 incluyendo el stream SSE), `customers` (2) y `dashboard` (2).
+- **Compartido:** `orders/pricing.ts` (port de `buildOrderPayload`), `lib/realtime.ts` (LISTEN/NOTIFY) y `lib/tickets.ts` (ticket de un uso para SSE).
+- **Tests:** 168 en verde en total (64 nuevos): checkout de punta a punta, cupones, stock, opciones, aislamiento entre negocios, POS, comprobantes, agregados del panel y ruteo de eventos.
+- **Migraciones nuevas:** `0004` (grants que faltaban) y `0005` (stock respeta `track_stock`, hallazgo H5).
+- **Decisiones:**
+  - `mercadopago` se rechaza en el checkout mientras no esté integrado el cobro.
+  - La venta presencial recibe ids de opciones, no precios: los recargos salen de la base.
+  - Aprobar un comprobante no marca el pedido pagado (sigue siendo `mark-paid`).
+  - El menú público esconde los valores de opción sin stock.
+
+**Siguiente:** F4 (WhatsApp y agente).
 
 ## Orden y dependencias
 

@@ -1,6 +1,7 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
 import { disconnectDb } from "./lib/db.js";
+import { stopListening } from "./lib/realtime.js";
 
 const app = buildApp();
 
@@ -15,6 +16,7 @@ function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`[server] ${signal} recibido, cerrando...`);
   server.close(async () => {
+    await stopListening();
     await disconnectDb();
     process.exit(0);
   });
