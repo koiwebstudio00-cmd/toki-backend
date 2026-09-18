@@ -13,6 +13,8 @@
 | `prisma/migrations/0003_realtime_notify/migration.sql` | Trigger de NOTIFY para tiempo real |
 | `prisma/migrations/0004_public_is_open/migration.sql` | Permisos que Supabase daba de fábrica: `business_is_open` para `anon` y USAGE sobre el esquema `extensions` (F3) |
 | `prisma/migrations/0005_stock_respeta_track_stock/migration.sql` | `persist_order` y `create_manual_sale` validan y descuentan stock solo si `track_stock` está activo (F3, hallazgo H5) |
+| `prisma/migrations/0006_payment_proof_idempotencia/migration.sql` | `order_payment_proofs.provider_message_id` + índice único parcial: el webhook se reintenta (F4) |
+| `prisma/migrations/0007_agent_stock_track_stock/migration.sql` | Las funciones `agent_*` también respetan `track_stock` (F4, hallazgo H5) |
 | `prisma/schema.prisma` | Modelos Prisma (31) generados desde la réplica, validados con el engine de Prisma 6.19 |
 | `scripts/bootstrap-prod.sql` | Creación del rol de la API en producción |
 
@@ -21,7 +23,7 @@
 1. **Base limpia:** PostgreSQL sin Supabase, con una capa de compatibilidad (roles `anon`/`authenticated`/`service_role`, `auth.uid()`, schema `auth`, privilegios por defecto de Supabase).
 2. **Migraciones:** se aplicaron las 27 en orden. Una no aplica sobre un historial limpio (ver hallazgo H1) y se excluyó porque su efecto ya está en la anterior.
 3. **Limpieza:** se quitó lo exclusivo de Supabase (schema `storage` y sus 5 policies, publicación `supabase_realtime`) y se exportó el schema consolidado como `0001`.
-4. **Verificación en una base nueva** con `0001` a `0005`:
+4. **Verificación en una base nueva** con `0001` a `0007`:
    - **Conteo idéntico:** 28 tablas en `public` + `auth.users`, 60 policies, 22 triggers y 71 índices, igual que la réplica.
    - **Aislamiento:** con dos usuarios y dos negocios creados por `create_business_with_owner`, el usuario A no ve `bot_settings` de B y su `UPDATE` sobre categorías de B afecta 0 filas.
    - **Contexto `anon`:** ve negocios activos y 0 pedidos.
@@ -232,7 +234,7 @@ La API corre cada transacción con `SET LOCAL ROLE` + `request.jwt.claims` (ver 
 
 **Nota:** `pg_dump` 16.10+ agrega líneas `\restrict`/`\unrestrict` (comandos de psql). Se quitaron de `0001` porque rompen `prisma migrate deploy`; nunca pegar un dump sin limpiarlas.
 
-**Verificación pendiente en la Mac** (en el sandbox no hay acceso a los binarios de Prisma): después de aplicar `0001`–`0005` en la base local, correr `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <url>`. Solo deben aparecer diferencias por los índices parciales documentados al final de `schema.prisma`.
+**Verificación pendiente en la Mac** (en el sandbox no hay acceso a los binarios de Prisma): después de aplicar `0001`–`0007` en la base local, correr `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url <url>`. Solo deben aparecer diferencias por los índices parciales documentados al final de `schema.prisma`.
 
 ## 8. Bootstrap de producción
 
@@ -289,5 +291,5 @@ grant connect on database toki to toki_app;
 | H2 | `coupons` tiene SELECT para `anon`: cualquiera con la anon key puede listar cupones activos | Fuga menor | La API no expone la tabla; `POST /public/.../coupons/validate` valida sin listar. Evaluar quitar la policy en una migración posterior |
 | H3 | `whatsapp_integrations` conserva columnas del proveedor Meta (`access_token_encrypted`, `verify_token`, `phone_number_id`, `waba_id`) | Ninguno | Se mantienen para migrar; se pueden limpiar después |
 | H4 | El rol `staff` existe, pero no hay flujo para invitar miembros | Ninguno | Queda para roadmap (invitaciones, como en Lamelas) |
-| H5 | `persist_order` y `create_manual_sale` comparaban el stock aunque `track_stock` fuera `false` (con `stock_quantity` en 0, el default de la tabla), y ponían `track_stock = true` al descontar | Un producto sin control de stock no se podía vender ("Stock insuficiente"), y el primero que se vendía quedaba controlando stock y se pausaba solo al llegar a cero. Hoy no se nota porque el panel activa `track_stock` siempre | Corregido en `0005`. Para todo lo que ya lleva stock el comportamiento es idéntico |
+| H5 | `persist_order` y `create_manual_sale` comparaban el stock aunque `track_stock` fuera `false` (con `stock_quantity` en 0, el default de la tabla), y ponían `track_stock = true` al descontar | Un producto sin control de stock no se podía vender ("Stock insuficiente"), y el primero que se vendía quedaba controlando stock y se pausaba solo al llegar a cero. Hoy no se nota porque el panel activa `track_stock` siempre | Corregido en `0005` (checkout y POS) y `0007` (agente de WhatsApp). Para todo lo que ya lleva stock el comportamiento es idéntico |
 | H6 | El dump del schema no trajo los grants que Supabase da de fábrica sobre el esquema `extensions` ni el EXECUTE de `business_is_open` para `anon` | El buscador del panel (`search_dashboard`, que corre con los permisos de quien llama) y el menú público fallaban con `permission denied` | Concedidos en `0004`. Revisar grants faltantes al comparar con producción (H1) |

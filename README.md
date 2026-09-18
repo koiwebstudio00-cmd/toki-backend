@@ -34,6 +34,6 @@ npm run test:prepare && npm test
 
 ## Estado
 
-Fases 0 a 3 terminadas: base, auth y cuenta, negocio, configuración, cupones, catálogo, uploads, checkout público, pedidos, tiempo real, clientes y dashboard.
+Fases 0 a 4 terminadas: base, auth y cuenta, negocio, configuración, cupones, catálogo, uploads, checkout público, pedidos, tiempo real, clientes, dashboard, WhatsApp y agente.
 
 Cada fase tiene su documento en [`docs/fases/`](docs/fases/) con los resultados de los tests y los comandos para probarla.

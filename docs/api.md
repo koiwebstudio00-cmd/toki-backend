@@ -368,7 +368,7 @@ ManualSaleInput = {
 
 ---
 
-## 12. `whatsapp`
+## 12. `whatsapp` ✅ implementado (F4)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
@@ -437,7 +437,7 @@ CheckoutInput = {
 
 ---
 
-## 14. `agent` (n8n)
+## 14. `agent` (n8n) ✅ implementado (F4)
 
 Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId`, y las funciones SQL validan que la conversación sea del negocio. Las respuestas son el JSON que ya devuelven las RPC `agent_*`: el prompt del agente no cambia.
 
@@ -451,6 +451,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail` | `rpc/agent_product_detail` |
 | GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` | `rpc/agent_search_faq` |
 | GET | `/agent/orders/status` | `?businessId=&conversationId=&orderCode=` | `agent_order_status` | `rpc/agent_order_status` |
+| GET | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_get` | `rpc/agent_draft_get` |
 | POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` | `agent_draft_add_item` | `rpc/agent_draft_add_item` |
 | DELETE | `/agent/draft/items/:itemId` | `?businessId=&conversationId=` | `agent_draft_remove_item` | `rpc/agent_draft_remove_item` |
 | PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` | `rpc/agent_draft_set_details` |
@@ -459,7 +460,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | PATCH | `/agent/orders/:orderCode` | `{ businessId, conversationId, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
 | POST | `/agent/orders/:orderCode/items` | `{ businessId, conversationId }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
 | POST | `/agent/conversations/:id/handoff` | `{ businessId, reason }` | `agent_conversation_handoff` | `rpc/agent_conversation_handoff` |
-| POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+| POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode?, providerMessageId? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
 
 **Services (`agent/service.ts`):**
 
@@ -491,6 +492,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | customers | 2 |
 | dashboard | 2 |
 | whatsapp | 6 |
+| agent | 18 |
 | public | 5 |
 | agent | 17 |
 | **Total** | **94** |

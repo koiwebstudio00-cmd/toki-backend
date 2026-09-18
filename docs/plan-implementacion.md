@@ -12,7 +12,7 @@
 | **F1. Auth y cuenta** ✅ 2026-09-17 | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
 | **F2. Negocio y catálogo** ✅ 2026-09-17 | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
 | **F3. Pedidos** ✅ 2026-09-18 | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
-| **F4. WhatsApp y agente** | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
+| **F4. WhatsApp y agente** ✅ 2026-09-18 | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
 | **F5. Infra** | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
 | **F6. Front** | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
 | **F7. Migración de datos y corte** | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
@@ -58,7 +58,19 @@
   - Aprobar un comprobante no marca el pedido pagado (sigue siendo `mark-paid`).
   - El menú público esconde los valores de opción sin stock.
 
-**Siguiente:** F4 (WhatsApp y agente).
+**F4 terminada (2026-09-18).**
+
+- **Módulos:** `whatsapp` (6 rutas: integración, conexión con Zernio e inbox) y `agent` (18 rutas con API key).
+- **Tests:** 215 en verde en total (47 nuevos). El camino borrador → confirmar → pedido está cubierto de punta a punta, incluyendo idempotencia y todos los motivos de rechazo.
+- **Migraciones nuevas:** `0006` (idempotencia de comprobantes) y `0007` (las funciones `agent_*` también respetan `track_stock`).
+- **Decisiones:**
+  - La confirmación devuelve `{ ok: false, error }` con HTTP 200: el request de n8n está bien, lo que falla es el pedido, y el agente lo explica.
+  - Confirmar dos veces devuelve el mismo pedido (`yaExistia`).
+  - El comprobante solo se guarda si hay un pedido al que atarlo.
+  - Se agregó `GET /agent/draft` (faltaba en el contrato; el agente necesita releer el borrador).
+- **Pendiente para el deploy:** recablear `toki-agent-v2.json` con la URL pública (tabla de equivalencias en `docs/fases/fase4.md`).
+
+**Siguiente:** F5 (infra y deploy en Dokploy).
 
 ## Orden y dependencias
 

@@ -5,6 +5,7 @@ import { config, corsOrigins } from "./config.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requestLogger } from "./middleware/logging.js";
 import { accountRoutes } from "./modules/account/routes.js";
+import { agentRoutes } from "./modules/agent/routes.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { businessRoutes, onboardingRoutes } from "./modules/businesses/routes.js";
 import { categoryRoutes, ingredientRoutes, productRoutes } from "./modules/catalog/routes.js";
@@ -16,6 +17,7 @@ import { orderRoutes, orderStreamRoutes, paymentProofRoutes } from "./modules/or
 import { publicRoutes } from "./modules/public/routes.js";
 import { settingsRoutes } from "./modules/settings/routes.js";
 import { uploadRoutes } from "./modules/uploads/routes.js";
+import { conversationRoutes, whatsappRoutes } from "./modules/whatsapp/routes.js";
 
 export function buildApp() {
   const app = express();
@@ -57,8 +59,10 @@ export function buildApp() {
   v1.use("/payment-proofs", paymentProofRoutes);
   v1.use("/customers", customerRoutes);
   v1.use("/dashboard", dashboardRoutes);
+  v1.use("/whatsapp", whatsappRoutes);
+  v1.use("/conversations", conversationRoutes);
   v1.use("/public", publicRoutes);
-  // Próximas fases: whatsapp, agent.
+  v1.use("/agent", agentRoutes);
   app.use("/v1", v1);
 
   app.use(notFoundHandler);
