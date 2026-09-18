@@ -13,7 +13,7 @@
 | **F2. Negocio y catálogo** ✅ 2026-09-17 | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
 | **F3. Pedidos** ✅ 2026-09-18 | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
 | **F4. WhatsApp y agente** ✅ 2026-09-18 | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
-| **F5. Infra** | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
+| **F5. Infra** ✅ 2026-09-18 | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
 | **F6. Front** | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
 | **F7. Migración de datos y corte** | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
 
@@ -70,7 +70,13 @@
   - Se agregó `GET /agent/draft` (faltaba en el contrato; el agente necesita releer el borrador).
 - **Pendiente para el deploy:** recablear `toki-agent-v2.json` con la URL pública (tabla de equivalencias en `docs/fases/fase4.md`).
 
-**Siguiente:** F5 (infra y deploy en Dokploy).
+**F5 terminada (2026-09-18).** Todo listo para desplegar; la ejecución es de Cacho (necesita el VPS y las credenciales).
+
+- **Entregables:** `docs/deploy.md` (guía completa), `docker-compose.yml`, `.env.production.example`, `scripts/backup-to-r2.sh`, `scripts/restore-from-r2.sh`, `scripts/smoke.sh`.
+- **Tests:** 227 en verde (12 nuevos, sin base de datos): la app no arranca mal configurada en producción, los scripts parsean, la base no expone puerto, la imagen no corre como root y el ejemplo de producción no tiene secretos.
+- **Decisiones:** base sin puerto publicado; el compose exige los secretos en vez de usar defaults; el backup no sube dumps sospechosamente chicos; el restore no puede apuntar a producción.
+
+**Siguiente:** F6 (migración del front).
 
 ## Orden y dependencias
 

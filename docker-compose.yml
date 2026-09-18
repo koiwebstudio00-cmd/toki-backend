@@ -1,0 +1,79 @@
+# Stack de producción para Dokploy (Compose).
+#
+# Levanta Postgres 17 y la API. Traefik (el de Dokploy) publica solo la API:
+# la base NO expone puerto al host, se llega a ella por la red interna.
+#
+# Dokploy → Create Service → Compose → apuntar a este archivo, y cargar las
+# variables en la pestaña Environment (ver .env.production.example).
+
+services:
+  toki-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: toki
+      POSTGRES_USER: toki_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD}
+      # Sin esto, un restore o un import con acentos puede ordenar distinto.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - toki-db-data:/var/lib/postgresql/data
+    # A propósito sin `ports`: la base no se expone al host ni a internet.
+    # Para conectarse desde afuera (migración de datos), túnel SSH.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toki_owner -d toki"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    command:
+      # VPS chico compartido con otros proyectos: valores moderados a propósito.
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - max_connections=100
+      - -c
+      - work_mem=8MB
+
+  toki-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      toki-db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      DATABASE_URL: ${DATABASE_URL:?Falta DATABASE_URL}
+      DATABASE_URL_MIGRATE: ${DATABASE_URL_MIGRATE:?Falta DATABASE_URL_MIGRATE}
+      DATABASE_URL_LISTEN: ${DATABASE_URL_LISTEN:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Falta CORS_ORIGIN}
+      FRONT_URL: ${FRONT_URL:?Falta FRONT_URL}
+      JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET}
+      AGENT_API_KEY_SHA256: ${AGENT_API_KEY_SHA256:?Falta AGENT_API_KEY_SHA256}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-resend}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Toki <no-reply@localhost>}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET_PUBLIC: ${R2_BUCKET_PUBLIC:-toki-public}
+      R2_BUCKET_PRIVATE: ${R2_BUCKET_PRIVATE:-toki-private}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      ZERNIO_API_KEY: ${ZERNIO_API_KEY:-}
+      ZERNIO_BASE_URL: ${ZERNIO_BASE_URL:-https://zernio.com/api/v1}
+    expose:
+      - "3000"
+    # El dominio y el HTTPS los pone Dokploy (pestaña Domains → puerto 3000).
+
+volumes:
+  toki-db-data:
