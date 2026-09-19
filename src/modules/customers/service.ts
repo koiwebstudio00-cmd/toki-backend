@@ -20,6 +20,7 @@ interface CustomerAggregate {
   orders_count: bigint;
   orders_total: string | null;
   last_order_at: Date | null;
+  last_address: string | null;
 }
 
 export async function list({ ctx, businessId }: BusinessScope, q: ListCustomersQuery) {
@@ -31,13 +32,19 @@ export async function list({ ctx, businessId }: BusinessScope, q: ListCustomersQ
     // usa el índice (business_id, created_at) de orders.
     const rows = await tx.$queryRaw<CustomerAggregate[]>`
       select c.id, c.name, c.phone, c.email, c.created_at, c.loyalty_points, c.total_spent,
-             agg.orders_count, agg.orders_total, agg.last_order_at
+             agg.orders_count, agg.orders_total, agg.last_order_at, addr.street as last_address
       from public.customers c
       left join lateral (
         select count(*) as orders_count, sum(o.total) as orders_total, max(o.created_at) as last_order_at
         from public.orders o
         where o.customer_id = c.id and o.business_id = c.business_id and o.status <> 'cancelled'
       ) agg on true
+      -- La última dirección que usó: es lo que el panel muestra como "dirección principal".
+      left join lateral (
+        select a.street from public.customer_addresses a
+        where a.customer_id = c.id and a.business_id = c.business_id
+        order by a.created_at desc limit 1
+      ) addr on true
       where c.business_id = ${businessId}::uuid
         and (${term}::text is null or c.name ilike ${term} or c.phone ilike ${term} or c.email ilike ${term})
       order by agg.last_order_at desc nulls last, c.created_at desc
@@ -72,7 +79,8 @@ export async function list({ ctx, businessId }: BusinessScope, q: ListCustomersQ
         totalSpent: toNumber(c.total_spent),
         ordersCount: Number(c.orders_count),
         ordersTotal: toNumber(c.orders_total ?? 0),
-        lastOrderAt: c.last_order_at
+        lastOrderAt: c.last_order_at,
+        lastAddress: c.last_address
       })),
       meta: { page: q.page, limit: q.limit, total: counted, pages: Math.max(1, Math.ceil(counted / q.limit)) }
     };

@@ -130,6 +130,24 @@ describe.runIf(DB_AVAILABLE)("dashboard y clientes", () => {
       expect(cliente.ordersTotal).toBe(10000);
       expect(cliente.totalSpent).toBe(10000);
       expect(cliente.lastOrderAt).toBeTruthy();
+      // Takeaway: sin dirección. El campo existe igual para el panel.
+      expect(cliente).toHaveProperty("lastAddress");
+    });
+
+    it("trae la última dirección usada", async () => {
+      await request(app)
+        .post(`/v1/public/businesses/${s.slug}/orders`)
+        .send({
+          customer: { name: "Cliente 1", phone: "3815550001" },
+          orderType: "delivery",
+          deliveryAddress: "Av. Siempre Viva 742",
+          paymentMethod: "cash",
+          items: [{ productId: s.burgerId, quantity: 1, optionValueIds: [s.aPuntoId] }]
+        })
+        .expect(201);
+
+      const res = await request(app).get("/v1/customers?search=3815550001").set(bearer(s.owner)).expect(200);
+      expect(res.body.data[0].lastAddress).toBe("Av. Siempre Viva 742");
     });
 
     it("busca por nombre o teléfono", async () => {

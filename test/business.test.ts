@@ -176,11 +176,52 @@ describe.runIf(DB_AVAILABLE)("businesses", () => {
     });
 
     it("un horario especial cerrado hoy cierra el negocio en modo auto", async () => {
-      await request(app).patch("/v1/business/status").set(bearer(t.owner)).send({ manualStatus: "auto" });
+      await request(app).patch("/v1/business/status").set(bearer(t.owner)).send({ manualStatus: "auto" }).expect(200);
+      // Semana sin cierres después de medianoche: si el día anterior cerrara a
+      // las 00:30, entre las 00:00 y las 00:30 el negocio sigue abierto por la
+      // ventana de ayer, y el test dependería de la hora a la que se corre.
+      await request(app)
+        .put("/v1/business/hours")
+        .set(bearer(t.owner))
+        .send({ hours: week({}) .map((day) => ({ ...day, opensAt2: null, closesAt2: null })) })
+        .expect(200);
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
       await request(app).put("/v1/business/special-hours").set(bearer(t.owner)).send({ specialHours: [{ date: today, isClosed: true }] }).expect(200);
       const res = await request(app).get("/v1/business").set(bearer(t.owner));
       expect(res.body.isOpen).toBe(false);
+    });
+
+    it("la ventana de ayer que cruza la medianoche mantiene abierto el negocio", async () => {
+      await request(app).patch("/v1/business/status").set(bearer(t.owner)).send({ manualStatus: "auto" }).expect(200);
+      // Abierto todos los días de 19:30 a 00:30: a las 00:10 de hoy, el negocio
+      // sigue en el turno de ayer.
+      await request(app)
+        .put("/v1/business/hours")
+        .set(bearer(t.owner))
+        .send({
+          hours: Array.from({ length: 7 }, (_, day) => ({
+            dayOfWeek: day,
+            isOpen: true,
+            opensAt: "19:30",
+            closesAt: "23:00",
+            opensAt2: "23:30",
+            closesAt2: "00:30"
+          }))
+        })
+        .expect(200);
+      await request(app).put("/v1/business/special-hours").set(bearer(t.owner)).send({ specialHours: [] }).expect(200);
+
+      const localHour = Number(
+        new Intl.DateTimeFormat("en-GB", { timeZone: "America/Argentina/Buenos_Aires", hour: "2-digit", hour12: false }).format(new Date())
+      );
+      const localMinutes = Number(
+        new Intl.DateTimeFormat("en-GB", { timeZone: "America/Argentina/Buenos_Aires", minute: "2-digit" }).format(new Date())
+      );
+      const dentroDelTurno =
+        (localHour === 19 && localMinutes >= 30) || (localHour > 19 && localHour <= 23) || (localHour === 0 && localMinutes <= 30);
+
+      const res = await request(app).get("/v1/business").set(bearer(t.owner));
+      expect(res.body.isOpen).toBe(dentroDelTurno);
     });
   });
 

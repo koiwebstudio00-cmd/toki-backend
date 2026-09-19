@@ -14,7 +14,7 @@
 | **F3. Pedidos** ✅ 2026-09-18 | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
 | **F4. WhatsApp y agente** ✅ 2026-09-18 | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
 | **F5. Infra** ✅ 2026-09-18 | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
-| **F6. Front** | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
+| **F6. Front** ✅ 2026-09-19 | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
 | **F7. Migración de datos y corte** | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
 
 **Total estimado:** 14 a 20 días hábiles. F6 puede avanzar en paralelo desde F2, módulo por módulo.
@@ -76,7 +76,15 @@
 - **Tests:** 227 en verde (12 nuevos, sin base de datos): la app no arranca mal configurada en producción, los scripts parsean, la base no expone puerto, la imagen no corre como root y el ejemplo de producción no tiene secretos.
 - **Decisiones:** base sin puerto publicado; el compose exige los secretos en vez de usar defaults; el backup no sube dumps sospechosamente chicos; el restore no puede apuntar a producción.
 
-**Siguiente:** F6 (migración del front).
+**F6 terminada (2026-09-19).** Se commitea en el repo `toki` (rama `fase6`), no acá.
+
+- **Cliente nuevo:** `src/lib/api/` con sesión, refresh automático, errores con código, SSE y una capa que traduce camelCase ↔ snake_case para no renombrar medio front.
+- **25 pantallas migradas**; se elimina `src/lib/supabase/` y la dependencia `@supabase/supabase-js`.
+- **Verificado:** `tsc -b` y `eslint` sin errores. El bundle de Vite lo corre Cacho (falta el binario nativo de rollup en el entorno de trabajo).
+- **En `toki-api`:** `GET /customers` devuelve `lastAddress`, y un test de horarios que dependía de la hora quedó determinista. 229 tests en verde.
+- **Dos mejoras de seguridad de paso:** el checkout ya no se baja la lista de cupones al navegador, y el POS manda ids en vez de precios.
+
+**Siguiente:** F7 (migración de datos y corte).
 
 ## Orden y dependencias
 
