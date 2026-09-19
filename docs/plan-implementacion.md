@@ -15,7 +15,7 @@
 | **F4. WhatsApp y agente** ✅ 2026-09-18 | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
 | **F5. Infra** ✅ 2026-09-18 | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
 | **F6. Front** ✅ 2026-09-19 | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
-| **F7. Migración de datos y corte** | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
+| **F7. Migración de datos y corte** ✅ 2026-09-19 | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
 
 **Total estimado:** 14 a 20 días hábiles. F6 puede avanzar en paralelo desde F2, módulo por módulo.
 
@@ -84,7 +84,13 @@
 - **En `toki-api`:** `GET /customers` devuelve `lastAddress`, y un test de horarios que dependía de la hora quedó determinista. 229 tests en verde.
 - **Dos mejoras de seguridad de paso:** el checkout ya no se baja la lista de cupones al navegador, y el POS manda ids en vez de precios.
 
-**Siguiente:** F7 (migración de datos y corte).
+**F7 terminada (2026-09-19).** Scripts escritos y probados; la corrida real es de Cacho.
+
+- **Entregables:** `scripts/compare-schema.ts` (verificación de H1), `scripts/migrate-supabase.ts` (usuarios, datos, archivos, URLs y verificación) y `docs/fases/fase7.md` con la ventana de migración paso a paso.
+- **Probado** contra una base que simula Supabase: la verificación detectó que copiar los usuarios disparaba `handle_new_user` y duplicaba los perfiles. Corregido apagando los triggers durante toda la copia.
+- **Conservado:** ids, hashes `$2a$` (las contraseñas siguen andando), fechas originales y keys de los archivos.
+
+**Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias
 

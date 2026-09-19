@@ -280,8 +280,10 @@ grant connect on database toki to toki_app;
 | 7. Corte | Front apuntando a la API; n8n con las URLs nuevas; smoke test de un pedido web, uno por WhatsApp y un cambio de estado en tiempo real |
 | 8. Rollback | Supabase queda intacto en solo lectura una semana |
 
-- **Idempotencia:** el script corta si la base destino no está vacía (salvo `--force`) y tiene `--dry-run`.
-- **Base:** se adapta de `back-lamelas/scripts/migrate-supabase.ts`.
+- **Idempotencia:** el script corta si la base destino no está vacía (salvo `--force`) y tiene `--dry-run`. `--only=users,data,storage,urls,verify` corre pasos sueltos.
+- **Triggers apagados durante TODA la copia** (`session_replication_role = replica`), no solo durante los datos: copiar los usuarios dispara `handle_new_user` y duplica los perfiles (ver `docs/fases/fase7.md` §2).
+- **Paso 0 obligatorio:** `npm run compare:schema` (script `scripts/compare-schema.ts`), que compara columnas, defaults, constraints, índices, policies, funciones, triggers y enums entre Supabase y la réplica. Es la verificación del hallazgo H1.
+- **Probado** contra una base que simula Supabase (`auth.users` en su forma original y `storage.objects`): conteos, suma de `orders.total`, hashes `$2a$` conservados, URLs reescritas y fechas originales intactas.
 
 ## 10. Hallazgos al replicar
 
