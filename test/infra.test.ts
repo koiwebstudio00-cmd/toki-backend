@@ -56,6 +56,22 @@ describe("configuración de producción", () => {
     await expect(import("../src/config.js")).rejects.toThrow(/AGENT_API_KEY_SHA256/);
   });
 
+  it("acepta el endpoint completo de R2 y se queda con el id de la cuenta", async () => {
+    // El error más fácil: pegar lo que muestra el panel de Cloudflare.
+    const id = "bfbd81bba79f318167a5b3308131b049";
+    for (const value of [id, `https://${id}.r2.cloudflarestorage.com`, `https://${id}.r2.cloudflarestorage.com/`]) {
+      vi.resetModules();
+      prodEnv({ R2_ACCOUNT_ID: value });
+      const { config } = await import("../src/config.js");
+      expect(config.R2_ACCOUNT_ID, `con ${value}`).toBe(id);
+    }
+  });
+
+  it("no arranca con un R2_ACCOUNT_ID que no es un id de cuenta", async () => {
+    prodEnv({ R2_ACCOUNT_ID: "mi-cuenta" });
+    await expect(import("../src/config.js")).rejects.toThrow(/R2_ACCOUNT_ID/);
+  });
+
   it("en desarrollo arranca sin secretos", async () => {
     process.env = { ...original, NODE_ENV: "development", DATABASE_URL: "postgresql://x@localhost/y" };
     const { config } = await import("../src/config.js");

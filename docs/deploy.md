@@ -44,7 +44,9 @@ En `toki-public` → Settings → CORS, permití tu dominio con `PUT` y `GET` (e
 ]
 ```
 
-Después creá un API token de R2 con permiso de lectura y escritura sobre los tres buckets. Te da `Access Key ID` y `Secret Access Key`.
+Después creá un API token de R2 (**R2 → Account Details → API Tokens → Manage**) con permiso **Object Read & Write** sobre los tres buckets. Te da `Access Key ID` y `Secret Access Key`; el secret se muestra **una sola vez**.
+
+El `R2_ACCOUNT_ID` es el id de 32 caracteres hex, no el endpoint. Si pegás el endpoint completo (`https://<id>.r2.cloudflarestorage.com`) la app se queda con el id igual, y si ponés cualquier otra cosa se niega a arrancar diciendo por qué.
 
 ## 3. Resend
 
@@ -161,4 +163,6 @@ Con **Auto Deploy** activado, cada push a `main` construye y reemplaza el conten
 | El health dice `db: "down"` | La API arrancó antes que la base | `depends_on: service_healthy` ya lo cubre; si persiste, revisar el host en `DATABASE_URL` |
 | El front recibe error de CORS | `CORS_ORIGIN` mal escrito o con barra final | Corregir y redesplegar |
 | Los mails no llegan | Dominio sin verificar en Resend | Completar SPF, DKIM y DMARC |
+| Las imágenes no suben desde el navegador | Falta la política de CORS en el bucket público | Agregarla con el dominio del front, `PUT` y `GET` (paso 2) |
+| La subida falla con un host raro y repetido | `R2_ACCOUNT_ID` mal cargado | Poné el id de 32 hex. Desde esta versión la app lo normaliza y valida al arrancar |
 | El tiempo real no manda eventos | `DATABASE_URL_LISTEN` mal, o el pool sin conexiones libres | Dejar una connection string aparte para LISTEN |
