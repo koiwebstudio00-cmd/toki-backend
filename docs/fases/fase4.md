@@ -229,13 +229,15 @@ npm run lint && npm run typecheck && npm run build
 
 ## 5. Recablear n8n (`toki-agent-v2.json`)
 
-El workflow todavía apunta a Supabase. La traducción es directa y no toca el prompt:
+**Ya está hecho** (fase 8): el workflow (`toki-agents/n8n/toki-agent-v2.json`) apunta a la API propia. Queda como referencia la tabla de equivalencias:
 
-| Nodo actual (Supabase) | Nuevo |
+| Nodo viejo (Supabase) | Nuevo |
 | --- | --- |
 | `rest/v1/whatsapp_integrations?...` | `GET /v1/agent/integrations/by-account/:accountId` |
 | `rest/v1/whatsapp_conversations` (upsert) | `POST /v1/agent/conversations/upsert` |
-| `rest/v1/whatsapp_messages` | `POST /v1/agent/messages` |
+| `rest/v1/whatsapp_conversations?select=status` | `GET /v1/agent/conversations/:id?businessId=` |
+| `rest/v1/whatsapp_messages` (insert) | `POST /v1/agent/messages` |
+| `rest/v1/whatsapp_messages?created_at=gt.` | `GET /v1/agent/conversations/:id/messages?businessId=&after=&direction=&limit=` |
 | `rpc/agent_context` | `GET /v1/agent/conversations/:id/context?businessId=&k=` |
 | `rpc/agent_search_products` | `GET /v1/agent/products/search?businessId=&q=&limit=` |
 | `rpc/agent_product_detail` | `GET /v1/agent/products/:id?businessId=` |
@@ -245,15 +247,15 @@ El workflow todavía apunta a Supabase. La traducción es directa y no toca el p
 | `rpc/agent_draft_remove_item` | `DELETE /v1/agent/draft/items/:itemId?businessId=&conversationId=` |
 | `rpc/agent_draft_set_details` | `PATCH /v1/agent/draft` |
 | `rpc/agent_order_status` | `GET /v1/agent/orders/status?businessId=&conversationId=&orderCode=` |
-| `rpc/agent_order_update_details` | `PATCH /v1/agent/orders/:orderCode` |
-| `rpc/agent_order_add_draft_items` | `POST /v1/agent/orders/:orderCode/items` |
+| `rpc/agent_order_update_details` | `PATCH /v1/agent/orders` (`orderCode` opcional, en el cuerpo) |
+| `rpc/agent_order_add_draft_items` | `POST /v1/agent/orders/items` (ídem) |
 | `rpc/agent_conversation_handoff` | `POST /v1/agent/conversations/:id/handoff` |
 | `functions/v1/create-order` (modo whatsapp) | `POST /v1/agent/draft/confirm` |
-| `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` (dos nodos) | `POST /v1/agent/payment-proofs` (**un solo nodo**) |
+| `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` (4 nodos) | `POST /v1/agent/payment-proofs` (**un solo nodo**) |
 
-Cambios en los headers de todos los nodos: se van `apikey` y `Authorization: Bearer <service_role>`, y queda **`X-Api-Key: <la key del agente>`**.
+Headers: se fueron `apikey` y `Authorization: Bearer <service_role>`; queda **`X-Api-Key: <la key del agente>`**. La única `Authorization` que sobrevive es la de Zernio, en `Send Zernio Reply`.
 
-No lo dejé hecho en el JSON a propósito: necesita la URL pública del backend, que sale del deploy (fase 5). Cuando la tengas, es buscar y reemplazar el host y los headers con esta tabla.
+El detalle de qué cambió nodo por nodo está en [`fase8.md`](fase8.md).
 
 ---
 

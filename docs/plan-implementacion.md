@@ -90,6 +90,13 @@
 - **Probado** contra una base que simula Supabase: la verificación detectó que copiar los usuarios disparaba `handle_new_user` y duplicaba los perfiles. Corregido apagando los triggers durante toda la copia.
 - **Conservado:** ids, hashes `$2a$` (las contraseñas siguen andando), fechas originales y keys de los archivos.
 
+**F8 terminada (2026-09-20).** El agente de WhatsApp contra la API propia.
+
+- **`toki-agent-v2.json` recableado** (repo `toki-agents`, rama `fase8`): 47 nodos → 43, sin una sola referencia a Supabase. El prompt y los nombres de las tools quedaron intactos.
+- **Tres huecos cerrados en `/v1/agent`**: `POST /messages` devuelve `createdAt`, y dos rutas nuevas (`GET /conversations/:id` y `GET /conversations/:id/messages`) que el workflow necesitaba para el buffer de ráfagas y la guarda de handoff.
+- **Dos correcciones de diseño:** `orderCode` pasa al cuerpo y es opcional (sin código, el último pedido editable del contacto), y `paymentMethod` vuelve a aceptar `mercadopago`.
+- **El comprobante de pago pasa de 4 nodos a 1.** 237 tests en verde. Detalle en `docs/fases/fase8.md`.
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias

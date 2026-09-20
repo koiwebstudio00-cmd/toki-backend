@@ -14,10 +14,6 @@ export const idParam = z.object({ id: uuid() });
 
 export const itemIdParam = z.object({ itemId: uuid() });
 
-export const orderCodeParam = z.object({
-  orderCode: z.string().trim().min(3).max(20)
-});
-
 export const upsertConversationSchema = z.object({
   businessId,
   contactId: z.string().trim().min(1, "Falta el contacto.").max(160),
@@ -33,6 +29,13 @@ export const logMessageSchema = z.object({
   providerMessageId: z.string().trim().max(200).nullable().optional(),
   rawPayload: z.unknown().optional(),
   aiIntent: z.string().trim().max(80).nullable().optional()
+});
+
+export const messagesQuery = z.object({
+  businessId,
+  after: z.string().datetime({ message: "Fecha inválida." }).optional(),
+  direction: z.enum(["inbound", "outbound"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
 });
 
 export const contextQuery = z.object({
@@ -67,21 +70,31 @@ export const draftDetailsSchema = z.object({
   customerName: z.string().trim().max(120).nullable().optional(),
   orderType: z.enum(["delivery", "takeaway"]).nullable().optional(),
   deliveryAddress: z.string().trim().max(300).nullable().optional(),
-  paymentMethod: z.enum(["cash", "transfer"]).nullable().optional(),
+  // `mercadopago` incluido a propósito: la función SQL lo acepta y verifica que
+  // el negocio lo tenga habilitado, devolviendo un motivo legible. Recortarlo
+  // acá convertía ese caso en un 400 que el agente no sabe explicar.
+  paymentMethod: z.enum(["cash", "transfer", "mercadopago"]).nullable().optional(),
   notes: z.string().trim().max(500).nullable().optional()
 });
 
 export const confirmDraftSchema = z.object({ businessId, conversationId });
 
+/** `orderCode` opcional: sin código, la función SQL resuelve el último pedido
+ *  editable del contacto, que es lo que el cliente quiere decir casi siempre. */
 export const orderDetailsSchema = z.object({
   businessId,
   conversationId,
+  orderCode: z.string().trim().max(20).optional(),
   orderType: z.enum(["delivery", "takeaway"]).nullable().optional(),
   deliveryAddress: z.string().trim().max(300).nullable().optional(),
-  paymentMethod: z.enum(["cash", "transfer"]).nullable().optional()
+  paymentMethod: z.enum(["cash", "transfer", "mercadopago"]).nullable().optional()
 });
 
-export const addDraftItemsSchema = z.object({ businessId, conversationId });
+export const addDraftItemsSchema = z.object({
+  businessId,
+  conversationId,
+  orderCode: z.string().trim().max(20).optional()
+});
 
 export const handoffSchema = z.object({
   businessId,

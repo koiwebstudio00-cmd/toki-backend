@@ -105,6 +105,73 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       expect(await ownerDb().whatsappMessage.count({ where: { conversationId } })).toBe(1);
     });
 
+    it("el alta del mensaje devuelve createdAt para la lógica de ráfaga", async () => {
+      const res = await request(app)
+        .post("/v1/agent/messages")
+        .set(key)
+        .send({ businessId: s.businessId, conversationId, direction: "inbound", content: "Hola" })
+        .expect(200);
+      expect(res.body.createdAt).toBeTruthy();
+      expect(new Date(res.body.createdAt).getTime()).not.toBeNaN();
+    });
+
+    it("dice si entró un mensaje del cliente después de uno dado", async () => {
+      const primero = await request(app)
+        .post("/v1/agent/messages")
+        .set(key)
+        .send({ businessId: s.businessId, conversationId, direction: "inbound", content: "hola" })
+        .expect(200);
+
+      const sinNuevos = await request(app)
+        .get(`/v1/agent/conversations/${conversationId}/messages?businessId=${s.businessId}&after=${encodeURIComponent(primero.body.createdAt)}&direction=inbound&limit=1`)
+        .set(key)
+        .expect(200);
+      expect(sinNuevos.body.count).toBe(0);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await request(app)
+        .post("/v1/agent/messages")
+        .set(key)
+        .send({ businessId: s.businessId, conversationId, direction: "inbound", content: "una muzza" })
+        .expect(200);
+
+      const conNuevos = await request(app)
+        .get(`/v1/agent/conversations/${conversationId}/messages?businessId=${s.businessId}&after=${encodeURIComponent(primero.body.createdAt)}&direction=inbound&limit=1`)
+        .set(key)
+        .expect(200);
+      expect(conNuevos.body.count).toBe(1);
+    });
+
+    it("devuelve el estado de la conversación", async () => {
+      const abierta = await request(app)
+        .get(`/v1/agent/conversations/${conversationId}?businessId=${s.businessId}`)
+        .set(key)
+        .expect(200);
+      expect(abierta.body).toMatchObject({ id: conversationId, status: "open" });
+
+      await ownerDb().whatsappConversation.update({
+        where: { id: conversationId },
+        data: { status: "handoff", handoffReason: "queja" }
+      });
+      const tomada = await request(app)
+        .get(`/v1/agent/conversations/${conversationId}?businessId=${s.businessId}`)
+        .set(key)
+        .expect(200);
+      expect(tomada.body).toMatchObject({ status: "handoff", handoffReason: "queja" });
+    });
+
+    it("no devuelve la conversación de otro negocio", async () => {
+      const otro = await seedShop("agente-otro-conv");
+      await request(app)
+        .get(`/v1/agent/conversations/${conversationId}?businessId=${otro.businessId}`)
+        .set(key)
+        .expect(404);
+      await request(app)
+        .get(`/v1/agent/conversations/${conversationId}/messages?businessId=${otro.businessId}`)
+        .set(key)
+        .expect(404);
+    });
+
     it("el mensaje actualiza lastMessageAt de la conversación", async () => {
       await request(app)
         .post("/v1/agent/messages")
@@ -218,6 +285,22 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       expect(res.body.error).toMatch(/habilitado/i);
     });
 
+    it("acepta mercadopago: la función SQL decide si el negocio lo tiene activo", async () => {
+      // El enum de Zod tiene que cubrir los tres medios que acepta la base. Si
+      // recorta mercadopago, el agente recibe un 400 que no sabe explicarle al
+      // cliente en vez del motivo legible que devuelve la función.
+      await ownerDb().paymentSettings.update({
+        where: { businessId: s.businessId },
+        data: { mercadopagoEnabled: true }
+      });
+      const res = await request(app)
+        .patch("/v1/agent/draft")
+        .set(key)
+        .send({ ...draft(), paymentMethod: "mercadopago" })
+        .expect(200);
+      expect(res.body.ok).toBe(true);
+    });
+
     it("cancela el borrador", async () => {
       await request(app)
         .post("/v1/agent/draft/items")
@@ -322,9 +405,9 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const creado = await request(app).post("/v1/agent/draft/confirm").set(key).send(draft()).expect(201);
 
       const res = await request(app)
-        .patch(`/v1/agent/orders/${creado.body.orderCode}`)
+        .patch("/v1/agent/orders")
         .set(key)
-        .send({ ...draft(), orderType: "delivery", deliveryAddress: "Av. Siempre Viva 742" })
+        .send({ ...draft(), orderCode: creado.body.orderCode, orderType: "delivery", deliveryAddress: "Av. Siempre Viva 742" })
         .expect(200);
       expect(res.body.ok).toBe(true);
 
@@ -344,14 +427,30 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
         .expect(200);
 
       const res = await request(app)
-        .post(`/v1/agent/orders/${creado.body.orderCode}/items`)
+        .post("/v1/agent/orders/items")
         .set(key)
-        .send(draft())
+        .send({ ...draft(), orderCode: creado.body.orderCode })
         .expect(200);
       expect(res.body.ok).toBe(true);
 
       const items = await ownerDb().orderItem.findMany({ where: { orderId: creado.body.id } });
       expect(items).toHaveLength(2);
+    });
+
+    it("sin código toma el último pedido del contacto", async () => {
+      await armarBorradorCompleto();
+      const creado = await request(app).post("/v1/agent/draft/confirm").set(key).send(draft()).expect(201);
+
+      // Es el caso más común: "cambiame la dirección", sin decir qué pedido.
+      const res = await request(app)
+        .patch("/v1/agent/orders")
+        .set(key)
+        .send({ ...draft(), orderType: "delivery", deliveryAddress: "Muñecas 500" })
+        .expect(200);
+      expect(res.body.ok).toBe(true);
+
+      const order = await ownerDb().order.findUniqueOrThrow({ where: { id: creado.body.id } });
+      expect(order.deliveryAddress).toBe("Muñecas 500");
     });
 
     it("deriva la conversación a una persona", async () => {

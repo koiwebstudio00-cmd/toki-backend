@@ -445,7 +445,9 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | --- | --- | --- | --- | --- |
 | GET | `/agent/integrations/by-account/:accountId` | — | `whatsapp_integrations` activa → `{ businessId, business: {...}, botEnabled }` | `rest/v1/whatsapp_integrations` |
 | POST | `/agent/conversations/upsert` | `{ businessId, contactId, phone? }` | Upsert por `(business_id, contact_id)`; no pisa `status` | `rest/v1/whatsapp_conversations` |
-| POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; si `providerMessageId` ya existe → `200 { duplicate: true }` | `rest/v1/whatsapp_messages` |
+| POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; devuelve `{ duplicate: false, id, createdAt }`, o `{ duplicate: true }` si `providerMessageId` ya existe | `rest/v1/whatsapp_messages` |
+| GET | `/agent/conversations/:id` | `?businessId=` | `{ id, contactId, phone, status, handoffReason, lastMessageAt }`. El workflow lo relee antes de enviar: si una persona tomó la conversación, el bot se calla | `rest/v1/whatsapp_conversations?select=status` |
+| GET | `/agent/conversations/:id/messages` | `?businessId=&after=&direction=&limit=50` | `{ data, count }`. Con `after` + `direction=inbound` responde "¿el cliente siguió escribiendo mientras esperábamos la ráfaga?" | `rest/v1/whatsapp_messages?created_at=gt.` |
 | GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | `agent_context` | `rpc/agent_context` |
 | GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` | `rpc/agent_search_products` |
 | GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail` | `rpc/agent_product_detail` |
@@ -457,10 +459,14 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` | `rpc/agent_draft_set_details` |
 | DELETE | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_cancel` | — |
 | POST | `/agent/draft/confirm` | `{ businessId, conversationId }` | `agent.confirmDraft` | `functions/v1/create-order` (modo whatsapp) |
-| PATCH | `/agent/orders/:orderCode` | `{ businessId, conversationId, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
-| POST | `/agent/orders/:orderCode/items` | `{ businessId, conversationId }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
+| PATCH | `/agent/orders` | `{ businessId, conversationId, orderCode?, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
+| POST | `/agent/orders/items` | `{ businessId, conversationId, orderCode? }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
 | POST | `/agent/conversations/:id/handoff` | `{ businessId, reason }` | `agent_conversation_handoff` | `rpc/agent_conversation_handoff` |
 | POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode?, providerMessageId? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+
+`orderCode` va en el **cuerpo** y es opcional en las dos rutas de pedido confirmado: sin código, la función SQL resuelve el último pedido editable del contacto, que es el caso más común ("cambiame la dirección"). Con el código en la URL no había forma de expresarlo.
+
+`paymentMethod` acepta `cash`, `transfer` y `mercadopago`: la validación de si el negocio lo tiene habilitado la hace la función SQL y vuelve como `{ ok: false, error }` legible, no como un 400.
 
 **Services (`agent/service.ts`):**
 
@@ -468,6 +474,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | --- | --- |
 | `resolveIntegration(accountId)` | Negocio y estado del bot |
 | `upsertConversation`, `logMessage` | Dedup por índice único parcial; captura `P2002` y devuelve `duplicate` |
+| `getConversation`, `listMessages` | Estado de la conversación y mensajes con filtro `after`/`direction`: lo que el workflow necesita para el debounce de ráfagas y para no pisar a un humano |
 | `context`, `searchProducts`, `productDetail`, `searchFaq`, `orderStatus` | Wrappers de lectura |
 | `draftAddItem`, `draftRemoveItem`, `draftSetDetails`, `draftCancel` | Wrappers de borrador |
 | `confirmDraft(businessId, conversationId)` | Borrador abierto; si ya está confirmado devuelve el pedido (idempotente). Valida nombre, tipo, pago y dirección; negocio abierto. Arma el input con los items del borrador (sin precios del cliente) → `pricing.build` → `persist_order(source: "whatsapp", conversationId)` → marca el borrador `confirmed`. Los errores vuelven como `{ ok: false, error }` legible para el agente |
@@ -492,7 +499,6 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | customers | 2 |
 | dashboard | 2 |
 | whatsapp | 6 |
-| agent | 18 |
+| agent | 20 |
 | public | 5 |
-| agent | 17 |
-| **Total** | **94** |
+| **Total** | **97** |

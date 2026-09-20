@@ -12,7 +12,7 @@ import {
   idParam,
   itemIdParam,
   logMessageSchema,
-  orderCodeParam,
+  messagesQuery,
   orderDetailsSchema,
   orderStatusQuery,
   paymentProofSchema,
@@ -36,6 +36,18 @@ agentRoutes.post("/conversations/upsert", async (req, res) => {
 
 agentRoutes.post("/messages", async (req, res) => {
   res.json(await svc.logMessage(logMessageSchema.parse(req.body)));
+});
+
+agentRoutes.get("/conversations/:id", async (req, res) => {
+  const { id } = idParam.parse(req.params);
+  const { businessId } = businessQuery.parse(req.query);
+  res.json(await svc.getConversation(businessId, id));
+});
+
+agentRoutes.get("/conversations/:id/messages", async (req, res) => {
+  const { id } = idParam.parse(req.params);
+  const { businessId, after, direction, limit } = messagesQuery.parse(req.query);
+  res.json(await svc.listMessages(businessId, id, { after, direction, limit }));
 });
 
 agentRoutes.get("/conversations/:id/context", async (req, res) => {
@@ -109,14 +121,15 @@ agentRoutes.get("/orders/status", async (req, res) => {
   res.json(await svc.orderStatus(businessId, conversationId, orderCode));
 });
 
-agentRoutes.patch("/orders/:orderCode", async (req, res) => {
-  const { orderCode } = orderCodeParam.parse(req.params);
-  res.json(await svc.updateOrderDetails(orderDetailsSchema.parse(req.body), orderCode));
+// `orderCode` va en el cuerpo y es opcional: sin código, la función SQL toma el
+// último pedido editable del contacto. Con el código en la URL no había forma
+// de expresar ese caso, que es el más común ("cambiame la dirección").
+agentRoutes.patch("/orders", async (req, res) => {
+  res.json(await svc.updateOrderDetails(orderDetailsSchema.parse(req.body)));
 });
 
-agentRoutes.post("/orders/:orderCode/items", async (req, res) => {
-  const { orderCode } = orderCodeParam.parse(req.params);
-  const { businessId, conversationId } = addDraftItemsSchema.parse(req.body);
+agentRoutes.post("/orders/items", async (req, res) => {
+  const { businessId, conversationId, orderCode } = addDraftItemsSchema.parse(req.body);
   res.json(await svc.addDraftItemsToOrder(businessId, conversationId, orderCode));
 });
 

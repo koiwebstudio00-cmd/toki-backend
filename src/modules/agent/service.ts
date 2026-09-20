@@ -108,13 +108,59 @@ export async function logMessage(input: LogMessageInput) {
       });
       return message;
     });
-    return { duplicate: false as const, id: row.id };
+    // `createdAt` lo necesita el workflow: es la marca contra la que compara
+    // si entró un mensaje nuevo mientras esperaba la ráfaga.
+    return { duplicate: false as const, id: row.id, createdAt: row.createdAt };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return { duplicate: true as const };
     }
     throw err;
   }
+}
+
+/**
+ * Estado de la conversación. El workflow lo relee justo antes de contestar: si
+ * una persona del negocio la tomó mientras el modelo pensaba, el bot se calla.
+ */
+export async function getConversation(businessId: string, conversationId: string) {
+  const row = await withDb(systemCtx, (tx) =>
+    tx.whatsappConversation.findFirst({
+      where: { id: conversationId, businessId },
+      select: { id: true, contactId: true, phone: true, status: true, handoffReason: true, lastMessageAt: true }
+    })
+  );
+  if (!row) throw notFound("La conversación no existe.");
+  return row;
+}
+
+/**
+ * Mensajes de la conversación, con filtro `after`. Con `after` + `direction`
+ * responde la pregunta que hace el workflow: ¿el cliente siguió escribiendo
+ * mientras esperábamos? (si siguió, esta ejecución se calla y contesta la
+ * última, que ya tiene todos los mensajes en el contexto).
+ */
+export async function listMessages(
+  businessId: string,
+  conversationId: string,
+  filters: { after?: string; direction?: "inbound" | "outbound"; limit: number }
+) {
+  const rows = await withDb(systemCtx, async (tx) => {
+    const exists = await tx.whatsappConversation.count({ where: { id: conversationId, businessId } });
+    if (exists === 0) throw notFound("La conversación no existe.");
+    return tx.whatsappMessage.findMany({
+      where: {
+        conversationId,
+        businessId,
+        ...(filters.after ? { createdAt: { gt: new Date(filters.after) } } : {}),
+        ...(filters.direction ? { direction: filters.direction } : {})
+      },
+      orderBy: { createdAt: "asc" },
+      take: filters.limit,
+      select: { id: true, direction: true, messageType: true, content: true, aiIntent: true, createdAt: true }
+    });
+  });
+  return { data: rows, count: rows.length };
 }
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
@@ -258,14 +304,14 @@ export async function confirmDraft(businessId: string, conversationId: string) {
 
 // ── Pedido ya confirmado ────────────────────────────────────────────────────
 
-export const updateOrderDetails = (i: OrderDetailsInput, orderCode: string) =>
+export const updateOrderDetails = (i: OrderDetailsInput) =>
   rpc(Prisma.sql`select public.agent_order_update_details(
-    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${orderCode},
+    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${i.orderCode ?? null},
     ${i.orderType ?? null}, ${i.deliveryAddress ?? null}, ${i.paymentMethod ?? null}) as result`);
 
-export const addDraftItemsToOrder = (businessId: string, conversationId: string, orderCode: string) =>
+export const addDraftItemsToOrder = (businessId: string, conversationId: string, orderCode?: string) =>
   rpc(
-    Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${orderCode}) as result`
+    Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
   );
 
 export const handoff = (businessId: string, conversationId: string, reason?: string | null) =>

@@ -136,7 +136,7 @@ Con **Auto Deploy** activado, cada push a `main` construye y reemplaza el conten
 
 ## 8. Después del deploy
 
-- **n8n:** recablear `toki-agent-v2.json` con `https://api.tudominio.com` y el header `X-Api-Key` (tabla de equivalencias en [`fases/fase4.md`](fases/fase4.md)).
+- **n8n:** importar `toki-agent-v2.json` (ya adaptado a la API) y reemplazar el placeholder `https://api.tudominio.com` por tu dominio y `PEGAR_TOKI_AGENT_API_KEY_AQUI` por la key del agente (detalle en [`fases/fase8.md`](fases/fase8.md)).
 - **Front:** apuntar el cliente HTTP a la API (fase 6).
 - **Datos:** migrar desde Supabase (fase 7).
 
