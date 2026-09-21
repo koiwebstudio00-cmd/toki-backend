@@ -389,14 +389,40 @@ En el servicio `toki-api`, pestaña **Domains → Add Domain**:
 - **Port:** `3000`
 - **HTTPS:** activado, **Let's Encrypt**
 
-Guardá y esperá un minuto a que emita el certificado.
+Guardá **y dale Redeploy al servicio**. Esto último no es opcional: en un servicio de tipo Compose, el dominio se traduce en etiquetas de Traefik dentro del stack, y esas etiquetas recién se aplican en el siguiente deploy. Guardar el dominio sin redesplegar deja a Traefik sin ninguna ruta para ese host.
+
+Esperá un minuto a que emita el certificado y probá:
 
 ```bash
+curl -I http://toki-api.koistudio.com.ar/v1/health
+# HTTP/1.1 308 Permanent Redirect → https://...
+
 curl https://toki-api.koistudio.com.ar/v1/health
 # {"ok":true,"db":"up","version":"1.0.0"}
 ```
 
-Si dice `db: "down"`, la API está viva pero no llega a la base: revisá `DATABASE_URL` y el bootstrap del paso 10.
+### Si el certificado no sale
+
+**El síntoma clave es qué devuelve el puerto 80.** Si `curl -I http://...` responde **404 con un body de 19 bytes**, eso es el "404 page not found" de Traefik: el tráfico llega, pero Traefik no tiene ninguna ruta para ese host. No es un problema de certificado — de hecho en los logs no vas a ver ni un intento de ACME, porque nunca llegó a pedirlo. Casi siempre es el redeploy que falta.
+
+Comprobá que las etiquetas quedaron puestas:
+
+```bash
+docker inspect $(docker ps -q -f name=toki-api) --format '{{json .Config.Labels}}' | tr ',' '\n' | grep -i traefik
+```
+
+Tienen que aparecer `traefik.enable=true`, una `rule` con `Host(...)` y el puerto `3000`. Si no están, el dominio no se guardó bien: revisá que el **Service Name** sea `toki-api` y no `toki-db`.
+
+Si en cambio el 80 responde y el 443 da `unable to get local issuer certificate`, ahí sí es ACME. Mirá qué certificado sirve:
+
+```bash
+echo | openssl s_client -connect toki-api.koistudio.com.ar:443 -servername toki-api.koistudio.com.ar 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+Un issuer `TRAEFIK DEFAULT CERT` confirma que el real nunca se emitió. Revisá los logs (`docker logs --tail 60 dokploy-traefik 2>&1 | grep -iE 'acme|certificate|error'`) y que haya un email de Let's Encrypt cargado en **Settings → Server**.
+
+Si el health dice `db: "down"`, la API está viva pero no llega a la base: revisá `DATABASE_URL` y el bootstrap del paso 10.
 
 ### Cerrar el panel de Dokploy
 
