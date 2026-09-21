@@ -21,9 +21,9 @@ Guía de punta a punta para el **VPS KVM 2 de Hostinger** (2 vCPU, 8 GB RAM, 100
 
 En hPanel: **VPS → Manage** (en tu servidor) → barra lateral **OS & Panel → Operating System**.
 
-La página tiene cuatro pestañas: *Plain OS*, *Docker Application*, *Control Panel* y *Application*. Buscá **Dokploy** en el buscador — está en **Docker Application**, e instala Ubuntu con Docker y Dokploy ya configurados.
+En el buscador escribí `dokploy`. Aparece bajo la pestaña **Panel de control** (la doc en inglés lo lista como *Docker Application*; el panel en español lo ubica ahí). Instala Ubuntu con Docker, Traefik y Dokploy ya configurados.
 
-Seleccionala y dale **Change OS**.
+Seleccionalo y confirmá.
 
 > ⚠️ Cambiar el SO **borra todo** lo que haya en el VPS, incluidos los snapshots. En un servidor nuevo no hay nada que perder, pero no corras esto nunca sobre uno que ya está sirviendo.
 
@@ -33,7 +33,7 @@ Seleccionala y dale **Change OS**.
 
 Durante la instalación hPanel te pide **crear la password de root**. Generala con un gestor de contraseñas, que sea larga y al azar, y guardala ahí mismo: es la llave del servidor entero. Si el asistente ya pasó, se cambia desde el panel del VPS, en la sección de acceso SSH.
 
-El **IP** del servidor está en la pantalla principal del VPS en hPanel. Anotalo: lo vas a usar en cada paso.
+El **IP** del servidor está en la pantalla principal del VPS en hPanel. Anotalo: lo vas a usar en cada paso. Hostinger asigna IPs de rangos variados (entre otros `2.25.128.0/17`), así que no te alarmes si no se parece al de otros hostings.
 
 La instalación tarda unos minutos. Cuando el estado queda en *Running*, seguí.
 
@@ -48,15 +48,15 @@ ssh root@<IP-DEL-VPS>
 La primera vez te va a preguntar si confiás en la huella del servidor: `yes`. Después te pide la password de root.
 
 ```bash
-# ¿Qué instaló la plantilla?
 cat /etc/os-release | head -2
-docker --version
-docker ps          # tiene que listar los contenedores de Dokploy
+docker ps
 free -h            # ~8 GB de RAM
 df -h /            # ~100 GB
 ```
 
-Si `docker ps` muestra contenedores con `dokploy` en el nombre, la plantilla hizo su trabajo y el paso 3 ya está resuelto.
+`docker ps` tiene que mostrar tres contenedores: `dokploy-traefik` (publica 80 y 443), `dokploy` (publica 3000) y un `postgres:16`, que es la base interna del panel — **no** la de Toki, que va a ser otro contenedor con Postgres 17. Si los ves, la plantilla hizo su trabajo y el paso 3 ya está resuelto.
+
+`free -h` va a mostrar `Swap: 0B`: eso se arregla en el paso 2.4.
 
 > **Tu salida de emergencia:** hPanel tiene una terminal en el navegador (*Browser terminal*). Si alguna vez te quedás afuera por SSH, entrás por ahí. Tenela ubicada antes de tocar la configuración de SSH en el paso 2.3.
 
@@ -126,16 +126,20 @@ free -h        # tiene que mostrar 2Gi en Swap
 
 ### 2.5 Firewall
 
+Desde acá conviene trabajar como `cacho` con `sudo` en vez de como root. Si seguís en la sesión de root, sacá los `sudo`.
+
 ```bash
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow OpenSSH
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 3000/tcp      # panel de Dokploy; lo cerramos en el paso 10
-ufw --force enable
-ufw status
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 3000/tcp   # panel de Dokploy; lo cerramos en el paso 11
+sudo ufw --force enable
+sudo ufw status
 ```
+
+Te avisa que puede cortar la conexión SSH: como ya permitiste OpenSSH, confirmá.
 
 **Con una salvedad importante:** UFW **no** filtra los puertos que publica Docker — Docker escribe sus propias reglas de iptables por debajo y las saltea. O sea que un `ufw deny 3000` no alcanza para esconder el panel de Dokploy. En el paso 10 se cierra de la forma que sí funciona.
 
