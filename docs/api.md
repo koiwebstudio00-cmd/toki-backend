@@ -303,11 +303,11 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 
 ---
 
-## 9. `orders`
+## 9. `orders` ✅ implementado (F3)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | Pedidos con items, opciones, historial y pagos | `OrdersPage` |
+| GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | `{ data: [pedido con items, opciones, historial y pagos], meta: { page, limit, total, pages } }` | `OrdersPage` |
 | GET | `/orders/:id` | M | — | Pedido completo (+ `barcode` de cada producto) | `refreshOrder` |
 | PATCH | `/orders/:id/status` | M | `{ status, note? }` | Pedido | RPC `update_order_status` |
 | POST | `/orders/:id/mark-paid` | M | — | Pedido | RPC `mark_order_paid` |
@@ -334,25 +334,27 @@ ManualSaleInput = {
 | `get(ctx, id)` | Pedido con relaciones; 404 si RLS lo oculta |
 | `changeStatus(ctx, id, status, note)` | `update_order_status` (valida membresía y escribe historial) |
 | `markPaid(ctx, id)` | `mark_order_paid` |
-| `createManualSale(ctx, input)` | `create_manual_sale` (stock, descuento, medio de pago, código) |
+| `createManualSale(ctx, input)` | Resuelve nombres y recargos de cada opción contra la base y llama a `create_manual_sale`. **El mostrador manda ids, nunca precios** |
 | `listPaymentProofs(ctx, orderId)` | Con URLs firmadas de `toki-private` |
 | `reviewPaymentProof(ctx, id, status)` | Setea `status`, `reviewed_at` y `reviewed_by`. **No** marca el pedido pagado |
 | `issueEventsTicket(ctx)` / `openEventStream(ticket, res)` | Ticket de un uso y suscripción al hub de `lib/realtime.ts` |
 
 ---
 
-## 10. `customers`
+## 10. `customers` ✅ implementado (F3)
 
 | Método | Ruta | Auth | Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/customers` | M | `?search=&page=&limit=` | `{ data: [{ id, name, phone, email, createdAt, addresses, ordersCount, totalSpent, lastOrderAt, loyaltyPoints }], meta }` | `CustomersPage` (hoy agrega en el navegador) |
+| GET | `/customers` | M | `?search=&page=&limit=` | `{ data: [{ id, name, phone, email, createdAt, ordersCount, ordersTotal, totalSpent, lastOrderAt, loyaltyPoints }], meta }` | `CustomersPage` (hoy agrega en el navegador) |
 | GET | `/customers/:id` | M | — | Cliente + direcciones + últimos 20 pedidos | — |
 
-**Services:** `list(ctx, filters)`, con agregados en SQL (`count`, `sum`, `max`), y `get(ctx, id)`.
+**Services:** `list(ctx, filters)`, con agregados en SQL (`count`, `sum`, `max`), y `get(ctx, id)` (direcciones + últimos 20 pedidos).
+
+`totalSpent` es el acumulado que mantiene `persist_order`; `ordersTotal` es la suma de los pedidos vigentes. No siempre coinciden (pedidos cancelados, ventas de mostrador anteriores al cliente) y el panel muestra los dos.
 
 ---
 
-## 11. `dashboard`
+## 11. `dashboard` ✅ implementado (F3)
 
 | Método | Ruta | Auth | Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
@@ -366,7 +368,7 @@ ManualSaleInput = {
 
 ---
 
-## 12. `whatsapp`
+## 12. `whatsapp` ✅ implementado (F4)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
@@ -390,7 +392,7 @@ ManualSaleInput = {
 
 ---
 
-## 13. `public` (clientes finales)
+## 13. `public` (clientes finales) ✅ implementado (F3)
 
 | Método | Ruta | Auth | Body / Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
@@ -435,7 +437,7 @@ CheckoutInput = {
 
 ---
 
-## 14. `agent` (n8n)
+## 14. `agent` (n8n) ✅ implementado (F4)
 
 Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId`, y las funciones SQL validan que la conversación sea del negocio. Las respuestas son el JSON que ya devuelven las RPC `agent_*`: el prompt del agente no cambia.
 
@@ -443,21 +445,28 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | --- | --- | --- | --- | --- |
 | GET | `/agent/integrations/by-account/:accountId` | — | `whatsapp_integrations` activa → `{ businessId, business: {...}, botEnabled }` | `rest/v1/whatsapp_integrations` |
 | POST | `/agent/conversations/upsert` | `{ businessId, contactId, phone? }` | Upsert por `(business_id, contact_id)`; no pisa `status` | `rest/v1/whatsapp_conversations` |
-| POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; si `providerMessageId` ya existe → `200 { duplicate: true }` | `rest/v1/whatsapp_messages` |
+| POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; devuelve `{ duplicate: false, id, createdAt }`, o `{ duplicate: true }` si `providerMessageId` ya existe | `rest/v1/whatsapp_messages` |
+| GET | `/agent/conversations/:id` | `?businessId=` | `{ id, contactId, phone, status, handoffReason, lastMessageAt }`. El workflow lo relee antes de enviar: si una persona tomó la conversación, el bot se calla | `rest/v1/whatsapp_conversations?select=status` |
+| GET | `/agent/conversations/:id/messages` | `?businessId=&after=&direction=&limit=50` | `{ data, count }`. Con `after` + `direction=inbound` responde "¿el cliente siguió escribiendo mientras esperábamos la ráfaga?" | `rest/v1/whatsapp_messages?created_at=gt.` |
 | GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | `agent_context` | `rpc/agent_context` |
 | GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` | `rpc/agent_search_products` |
 | GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail` | `rpc/agent_product_detail` |
 | GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` | `rpc/agent_search_faq` |
 | GET | `/agent/orders/status` | `?businessId=&conversationId=&orderCode=` | `agent_order_status` | `rpc/agent_order_status` |
+| GET | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_get` | `rpc/agent_draft_get` |
 | POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` | `agent_draft_add_item` | `rpc/agent_draft_add_item` |
 | DELETE | `/agent/draft/items/:itemId` | `?businessId=&conversationId=` | `agent_draft_remove_item` | `rpc/agent_draft_remove_item` |
 | PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` | `rpc/agent_draft_set_details` |
 | DELETE | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_cancel` | — |
 | POST | `/agent/draft/confirm` | `{ businessId, conversationId }` | `agent.confirmDraft` | `functions/v1/create-order` (modo whatsapp) |
-| PATCH | `/agent/orders/:orderCode` | `{ businessId, conversationId, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
-| POST | `/agent/orders/:orderCode/items` | `{ businessId, conversationId }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
+| PATCH | `/agent/orders` | `{ businessId, conversationId, orderCode?, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
+| POST | `/agent/orders/items` | `{ businessId, conversationId, orderCode? }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
 | POST | `/agent/conversations/:id/handoff` | `{ businessId, reason }` | `agent_conversation_handoff` | `rpc/agent_conversation_handoff` |
-| POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+| POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode?, providerMessageId? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+
+`orderCode` va en el **cuerpo** y es opcional en las dos rutas de pedido confirmado: sin código, la función SQL resuelve el último pedido editable del contacto, que es el caso más común ("cambiame la dirección"). Con el código en la URL no había forma de expresarlo.
+
+`paymentMethod` acepta `cash`, `transfer` y `mercadopago`: la validación de si el negocio lo tiene habilitado la hace la función SQL y vuelve como `{ ok: false, error }` legible, no como un 400.
 
 **Services (`agent/service.ts`):**
 
@@ -465,6 +474,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | --- | --- |
 | `resolveIntegration(accountId)` | Negocio y estado del bot |
 | `upsertConversation`, `logMessage` | Dedup por índice único parcial; captura `P2002` y devuelve `duplicate` |
+| `getConversation`, `listMessages` | Estado de la conversación y mensajes con filtro `after`/`direction`: lo que el workflow necesita para el debounce de ráfagas y para no pisar a un humano |
 | `context`, `searchProducts`, `productDetail`, `searchFaq`, `orderStatus` | Wrappers de lectura |
 | `draftAddItem`, `draftRemoveItem`, `draftSetDetails`, `draftCancel` | Wrappers de borrador |
 | `confirmDraft(businessId, conversationId)` | Borrador abierto; si ya está confirmado devuelve el pedido (idempotente). Valida nombre, tipo, pago y dirección; negocio abierto. Arma el input con los items del borrador (sin precios del cliente) → `pricing.build` → `persist_order(source: "whatsapp", conversationId)` → marca el borrador `confirmed`. Los errores vuelven como `{ ok: false, error }` legible para el agente |
@@ -489,6 +499,6 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | customers | 2 |
 | dashboard | 2 |
 | whatsapp | 6 |
+| agent | 20 |
 | public | 5 |
-| agent | 17 |
-| **Total** | **94** |
+| **Total** | **97** |

@@ -50,6 +50,9 @@ Sin red para el schema engine de Prisma (sandbox/CI): `MIGRATE_WITH=sql npm run 
 - `updateMany` con RLS devuelve `count: 0` sin error cuando la fila es de otro negocio: traducir a 404.
 - `anon` tiene GRANT sobre casi todas las tablas (herencia de Supabase): lo que protege es RLS, no el grant.
 - Todo contexto que escribe necesita también policy de SELECT (Prisma relee la fila).
+- El dump del schema **no trae los grants que Supabase da de fábrica** (USAGE sobre `extensions`, EXECUTE de funciones para `anon`). Si algo falla con `permission denied` en una función o un esquema, es eso: grant nuevo en una migración (ver `0004`).
+- El stock solo cuenta si `track_stock` está activo (migración `0005`). Antes se comparaba siempre y un producto sin control de stock no se podía vender.
+- Rutas con prefijo compartido: el stream SSE (`/orders/events`) se monta **antes** que `/orders/:id`, y en su propio router, porque se autentica con ticket y no con Bearer.
 - `pg_dump` 16.10+ agrega líneas `\restrict`: son de psql y rompen `prisma migrate deploy`. No pegar dumps sin limpiarlos.
 
 ## Al terminar una tarea

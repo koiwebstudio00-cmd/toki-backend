@@ -11,11 +11,11 @@
 | **F0. Base** ✅ 2026-09-17 | Repo `toki-api` con el esqueleto de back-lamelas (config, errores, logging, mailer, R2, Zernio, Dockerfile, tests). Prisma con `schema.prisma` + migraciones `0001`–`0003`. `withDb`, `requireAuth`, `requireBusiness`, `requireApiKey`, rate limit. Módulo `health`. Seed con 2 negocios. Tests RLS | `npm test` en verde contra `toki_test`; `GET /v1/health` local | 1-2 días |
 | **F1. Auth y cuenta** ✅ 2026-09-17 | `auth` (9 rutas) con emails de Resend; `account` | Registro → email → verificación → login → refresh → reset, con tests | 1-2 días |
 | **F2. Negocio y catálogo** ✅ 2026-09-17 | `businesses`, `settings`, `coupons`, `catalog`, `uploads` | CRUD completo con tests de rol (staff no edita) | 2-3 días |
-| **F3. Pedidos** | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
-| **F4. WhatsApp y agente** | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
-| **F5. Infra** | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
-| **F6. Front** | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
-| **F7. Migración de datos y corte** | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
+| **F3. Pedidos** ✅ 2026-09-18 | `orders/pricing.ts` (port de `create-order`), `public` (menú, cupón, checkout, seguimiento), `orders` (tablero, estados, pago, POS, comprobantes), realtime SSE, `customers`, `dashboard` | Pedido web de punta a punta con tiempo real; tests de cálculo | 3-4 días |
+| **F4. WhatsApp y agente** ✅ 2026-09-18 | `whatsapp` (conexión Zernio, inbox), `agent` (17 rutas); recablear `toki-agent-v2.json` | Conversación real que arma y confirma un pedido | 2-3 días |
+| **F5. Infra** ✅ 2026-09-18 | Dokploy: `toki-db`, bootstrap, `toki-api`, dominio, backups a R2 con restore probado; buckets R2 con CORS; dominio en Resend | API en producción con base vacía y health OK | 1 día |
+| **F6. Front** ✅ 2026-09-19 | Cliente HTTP (`src/lib/api.ts`) con refresh automático; reemplazar `supabase-js` pantalla por pantalla usando la columna "Origen" de `api.md`; SSE en `OrdersPage` y `DashboardShell`; subida a R2 | Front sin referencias a Supabase; `npm run build` y `lint` OK | 3-4 días |
+| **F7. Migración de datos y corte** ✅ 2026-09-19 | Comparar schema real de Supabase vs `0001` (H1); ensayo en staging; ventana de migración (`base-de-datos.md` §9); smoke test; Supabase en solo lectura una semana | Pilotos operando en el VPS | 1 día |
 
 **Total estimado:** 14 a 20 días hábiles. F6 puede avanzar en paralelo desde F2, módulo por módulo.
 
@@ -46,7 +46,58 @@
   - Las opciones de producto conservan ids.
 - **Utilidades nuevas:** `lib/request.ts` (`businessScope`), `lib/validation.ts`, `lib/time.ts`, y `isAllowedImageUrl` / `deleteReplacedImage` en `lib/r2.ts`.
 
-**Siguiente:** F3 (pedidos, checkout público, tiempo real, clientes y dashboard).
+**F3 terminada (2026-09-18).**
+
+- **Módulos:** `public` (5 rutas), `orders` (9 incluyendo el stream SSE), `customers` (2) y `dashboard` (2).
+- **Compartido:** `orders/pricing.ts` (port de `buildOrderPayload`), `lib/realtime.ts` (LISTEN/NOTIFY) y `lib/tickets.ts` (ticket de un uso para SSE).
+- **Tests:** 168 en verde en total (64 nuevos): checkout de punta a punta, cupones, stock, opciones, aislamiento entre negocios, POS, comprobantes, agregados del panel y ruteo de eventos.
+- **Migraciones nuevas:** `0004` (grants que faltaban) y `0005` (stock respeta `track_stock`, hallazgo H5).
+- **Decisiones:**
+  - `mercadopago` se rechaza en el checkout mientras no esté integrado el cobro.
+  - La venta presencial recibe ids de opciones, no precios: los recargos salen de la base.
+  - Aprobar un comprobante no marca el pedido pagado (sigue siendo `mark-paid`).
+  - El menú público esconde los valores de opción sin stock.
+
+**F4 terminada (2026-09-18).**
+
+- **Módulos:** `whatsapp` (6 rutas: integración, conexión con Zernio e inbox) y `agent` (18 rutas con API key).
+- **Tests:** 215 en verde en total (47 nuevos). El camino borrador → confirmar → pedido está cubierto de punta a punta, incluyendo idempotencia y todos los motivos de rechazo.
+- **Migraciones nuevas:** `0006` (idempotencia de comprobantes) y `0007` (las funciones `agent_*` también respetan `track_stock`).
+- **Decisiones:**
+  - La confirmación devuelve `{ ok: false, error }` con HTTP 200: el request de n8n está bien, lo que falla es el pedido, y el agente lo explica.
+  - Confirmar dos veces devuelve el mismo pedido (`yaExistia`).
+  - El comprobante solo se guarda si hay un pedido al que atarlo.
+  - Se agregó `GET /agent/draft` (faltaba en el contrato; el agente necesita releer el borrador).
+- **Pendiente para el deploy:** recablear `toki-agent-v2.json` con la URL pública (tabla de equivalencias en `docs/fases/fase4.md`).
+
+**F5 terminada (2026-09-18).** Todo listo para desplegar; la ejecución es de Cacho (necesita el VPS y las credenciales).
+
+- **Entregables:** `docs/deploy.md` (guía completa), `docker-compose.yml`, `.env.production.example`, `scripts/backup-to-r2.sh`, `scripts/restore-from-r2.sh`, `scripts/smoke.sh`.
+- **Tests:** 227 en verde (12 nuevos, sin base de datos): la app no arranca mal configurada en producción, los scripts parsean, la base no expone puerto, la imagen no corre como root y el ejemplo de producción no tiene secretos.
+- **Decisiones:** base sin puerto publicado; el compose exige los secretos en vez de usar defaults; el backup no sube dumps sospechosamente chicos; el restore no puede apuntar a producción.
+
+**F6 terminada (2026-09-19).** Se commitea en el repo `toki` (rama `fase6`), no acá.
+
+- **Cliente nuevo:** `src/lib/api/` con sesión, refresh automático, errores con código, SSE y una capa que traduce camelCase ↔ snake_case para no renombrar medio front.
+- **25 pantallas migradas**; se elimina `src/lib/supabase/` y la dependencia `@supabase/supabase-js`.
+- **Verificado:** `tsc -b` y `eslint` sin errores. El bundle de Vite lo corre Cacho (falta el binario nativo de rollup en el entorno de trabajo).
+- **En `toki-api`:** `GET /customers` devuelve `lastAddress`, y un test de horarios que dependía de la hora quedó determinista. 229 tests en verde.
+- **Dos mejoras de seguridad de paso:** el checkout ya no se baja la lista de cupones al navegador, y el POS manda ids en vez de precios.
+
+**F7 terminada (2026-09-19).** Scripts escritos y probados; la corrida real es de Cacho.
+
+- **Entregables:** `scripts/compare-schema.ts` (verificación de H1), `scripts/migrate-supabase.ts` (usuarios, datos, archivos, URLs y verificación) y `docs/fases/fase7.md` con la ventana de migración paso a paso.
+- **Probado** contra una base que simula Supabase: la verificación detectó que copiar los usuarios disparaba `handle_new_user` y duplicaba los perfiles. Corregido apagando los triggers durante toda la copia.
+- **Conservado:** ids, hashes `$2a$` (las contraseñas siguen andando), fechas originales y keys de los archivos.
+
+**F8 terminada (2026-09-20).** El agente de WhatsApp contra la API propia.
+
+- **`toki-agent-v2.json` recableado** (repo `toki-agents`, rama `fase8`): 47 nodos → 43, sin una sola referencia a Supabase. El prompt y los nombres de las tools quedaron intactos.
+- **Tres huecos cerrados en `/v1/agent`**: `POST /messages` devuelve `createdAt`, y dos rutas nuevas (`GET /conversations/:id` y `GET /conversations/:id/messages`) que el workflow necesitaba para el buffer de ráfagas y la guarda de handoff.
+- **Dos correcciones de diseño:** `orderCode` pasa al cuerpo y es opcional (sin código, el último pedido editable del contacto), y `paymentMethod` vuelve a aceptar `mercadopago`.
+- **El comprobante de pago pasa de 4 nodos a 1.** 237 tests en verde. Detalle en `docs/fases/fase8.md`.
+
+**Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias
 
