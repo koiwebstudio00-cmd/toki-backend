@@ -2,6 +2,15 @@ import "dotenv/config";
 import { z } from "zod";
 
 // Variables de entorno validadas al arrancar. Ver docs/arquitectura.md §11.
+/** Extrae el id de cuenta de R2: acepta el id suelto o el endpoint completo. */
+function accountIdFrom(value: string): string {
+  return value
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\.r2\.cloudflarestorage\.com.*$/i, "")
+    .replace(/\/+$/, "");
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3000),
@@ -33,7 +42,17 @@ const envSchema = z.object({
   EMAIL_FROM: z.string().default("Toki <no-reply@localhost>"),
 
   // Cloudflare R2. Sin credenciales, presign/delete quedan en modo stub (dev/test).
-  R2_ACCOUNT_ID: z.string().optional(),
+  // El panel de Cloudflare muestra el id suelto y también dentro del endpoint
+  // (https://<id>.r2.cloudflarestorage.com). Se acepta cualquiera de las dos:
+  // pegar el endpoint completo es el error más fácil de cometer y el más
+  // molesto de diagnosticar (la URL prefirmada sale con el host duplicado).
+  R2_ACCOUNT_ID: z
+    .string()
+    .optional()
+    .transform((value) => (value ? accountIdFrom(value) : value))
+    .refine((value) => !value || /^[a-f0-9]{32}$/i.test(value), {
+      message: "R2_ACCOUNT_ID tiene que ser el id de la cuenta (32 caracteres hex) o su endpoint completo"
+    }),
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
   R2_BUCKET_PUBLIC: z.string().default("toki-public-dev"),

@@ -28,9 +28,13 @@ npm run test:prepare && npm test
 | [`docs/api.md`](docs/api.md) | Contrato de endpoints |
 | [`docs/base-de-datos.md`](docs/base-de-datos.md) | Modelo de datos, RLS, migraciones |
 | [`docs/stack.md`](docs/stack.md) | Tecnologías y versiones |
+| [`docs/deploy.md`](docs/deploy.md) | Deploy en el VPS con Dokploy, backups y checklist |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Fases y estado |
+| [`docs/fases/`](docs/fases/) | Qué se hizo en cada fase, tests y cómo probarla a mano |
 | [`CLAUDE.md`](CLAUDE.md) | Reglas del proyecto |
 
 ## Estado
 
-Fases 0 a 2 terminadas: base, auth y cuenta, negocio, configuración, cupones, catálogo y uploads.
+Fases 0 a 7 terminadas: base, auth y cuenta, negocio, configuración, cupones, catálogo, uploads, checkout público, pedidos, tiempo real, clientes, dashboard, WhatsApp, agente, infraestructura de deploy, migración del front y scripts de migración de datos.
+
+Cada fase tiene su documento en [`docs/fases/`](docs/fases/) con los resultados de los tests y los comandos para probarla.

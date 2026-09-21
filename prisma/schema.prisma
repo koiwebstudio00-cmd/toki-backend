@@ -354,7 +354,8 @@ model OrderPaymentProof {
   conversationId String?               @map("conversation_id") @db.Uuid
   storagePath    String                @map("storage_path")
   mediaType      String                @default("image") @map("media_type")
-  status         String                @default("pending")
+  status            String             @default("pending")
+  providerMessageId String?            @map("provider_message_id")
   reviewedAt     DateTime?             @map("reviewed_at") @db.Timestamptz(6)
   reviewedBy     String?               @map("reviewed_by") @db.Uuid
   createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)

@@ -105,3 +105,106 @@ export async function seedTeam() {
 }
 
 export const bearer = (u: TestUser) => ({ authorization: `Bearer ${u.token}` });
+
+/**
+ * Negocio listo para vender: abierto, con efectivo y transferencia, una
+ * hamburguesa con opciones (una obligatoria y una con recargo) y una gaseosa.
+ * Es la base de los tests de checkout, pedidos y dashboard.
+ */
+export async function seedShop(slug = "shop-test") {
+  await truncateAll();
+  const owner = await createUser(`owner@${slug}.test`);
+  const staff = await createUser(`staff@${slug}.test`);
+  const businessId = await createBusiness(owner, slug);
+  await addMember(businessId, staff, "staff");
+
+  const db = ownerDb();
+  // manual_status = open: el test no depende de la hora a la que se corre.
+  await db.business.update({
+    where: { id: businessId },
+    data: { manualStatus: "open", minimumOrderAmount: 1000, deliveryFee: 500, city: "Tucumán" }
+  });
+  await db.paymentSettings.upsert({
+    where: { businessId },
+    create: { businessId, cashEnabled: true, transferEnabled: true },
+    update: { cashEnabled: true, transferEnabled: true }
+  });
+
+  const category = await db.category.create({ data: { businessId, name: "Hamburguesas", sortOrder: 1 } });
+
+  const burger = await db.product.create({
+    data: {
+      businessId,
+      categoryId: category.id,
+      name: "Doble cheddar",
+      price: 10000,
+      trackStock: true,
+      stockQuantity: 10,
+      sortOrder: 1
+    }
+  });
+  const punto = await db.productOption.create({
+    data: { businessId, productId: burger.id, name: "Punto", type: "single", isRequired: true, minSelect: 1, maxSelect: 1 }
+  });
+  const aPunto = await db.productOptionValue.create({
+    data: { businessId, optionId: punto.id, name: "A punto", sortOrder: 1 }
+  });
+  const jugosa = await db.productOptionValue.create({
+    data: { businessId, optionId: punto.id, name: "Jugosa", sortOrder: 2 }
+  });
+  const extras = await db.productOption.create({
+    data: { businessId, productId: burger.id, name: "Extras", type: "multiple", isRequired: false, minSelect: 0, maxSelect: 2 }
+  });
+  const panceta = await db.productOptionValue.create({
+    data: { businessId, optionId: extras.id, name: "Panceta", priceDelta: 1500, trackStock: true, stockQuantity: 4, sortOrder: 1 }
+  });
+
+  const soda = await db.product.create({
+    data: { businessId, categoryId: category.id, name: "Gaseosa", price: 2500, sortOrder: 2 }
+  });
+
+  return {
+    owner,
+    staff,
+    businessId,
+    categoryId: category.id,
+    burgerId: burger.id,
+    sodaId: soda.id,
+    puntoId: punto.id,
+    aPuntoId: aPunto.id,
+    jugosaId: jugosa.id,
+    extrasId: extras.id,
+    pancetaId: panceta.id,
+    slug
+  };
+}
+
+export async function createCoupon(
+  businessId: string,
+  code: string,
+  data: Partial<{
+    discountType: string;
+    discountValue: number;
+    minimumOrderAmount: number;
+    usageLimit: number | null;
+    usedCount: number;
+    isActive: boolean;
+    startsAt: Date | null;
+    endsAt: Date | null;
+  }> = {}
+) {
+  return ownerDb().coupon.create({
+    data: {
+      businessId,
+      code,
+      discountType: data.discountType ?? "percent",
+      discountValue: data.discountValue ?? 10,
+      minimumOrderAmount: data.minimumOrderAmount ?? 0,
+      usageLimit: data.usageLimit ?? null,
+      usedCount: data.usedCount ?? 0,
+      isActive: data.isActive ?? true,
+      startsAt: data.startsAt ?? null,
+      endsAt: data.endsAt ?? null
+    }
+  });
+}
