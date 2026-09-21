@@ -7,6 +7,7 @@
 // Las respuestas son las mismas que devolvían las RPC `agent_*`, así el prompt
 // del agente no cambia al migrar.
 import { Prisma } from "@prisma/client";
+import { config } from "../../config.js";
 import { systemCtx, type Tx, withDb } from "../../lib/db.js";
 import { notFound } from "../../lib/errors.js";
 import { newPaymentProofKey, putObject } from "../../lib/r2.js";
@@ -165,8 +166,28 @@ export async function listMessages(
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
 
-export const context = (businessId: string, conversationId: string, k: number) =>
-  rpc(Prisma.sql`select public.agent_context(${businessId}::uuid, ${conversationId}::uuid, ${k}) as result`);
+/**
+ * Contexto del turno, enriquecido con los links públicos.
+ *
+ * La URL del menú no vive en la base: se arma con `FRONT_URL` y el slug. Sin
+ * esto el agente no tiene forma de pasar el menú digital y termina leyendo los
+ * productos de a uno, que es lo que pasaba en producción.
+ */
+export async function context(businessId: string, conversationId: string, k: number) {
+  const result = await rpc(
+    Prisma.sql`select public.agent_context(${businessId}::uuid, ${conversationId}::uuid, ${k}) as result`
+  );
+  const base = config.FRONT_URL.replace(/\/+$/, "");
+  const business = result.business as Json | undefined;
+  const slug = typeof business?.slug === "string" ? business.slug : null;
+  if (business && slug) business.menu_url = `${base}/${slug}`;
+
+  const order = result.active_order as Json | null | undefined;
+  const code = typeof order?.order_code === "string" ? order.order_code : null;
+  if (order && slug && code) order.track_url = `${base}/${slug}/order/${code}`;
+
+  return result;
+}
 
 export const searchProducts = (businessId: string, q: string | undefined, limit: number) =>
   rpc(Prisma.sql`select public.agent_search_products(${businessId}::uuid, ${q ?? null}, ${limit}) as result`);

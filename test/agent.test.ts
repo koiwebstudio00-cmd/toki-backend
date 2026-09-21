@@ -4,6 +4,7 @@
 import request from "supertest";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
+import { config } from "../src/config.js";
 import { disconnectDb } from "../src/lib/db.js";
 import { DB_AVAILABLE, ownerDb, seedShop, TEST_AGENT_KEY } from "./helpers.js";
 
@@ -217,6 +218,16 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
         .set(key)
         .expect(200);
       expect(res.body).toBeTypeOf("object");
+    });
+
+    it("el contexto trae el link del menú público", async () => {
+      // Sin esto el agente no puede pasar el menú digital y termina leyendo los
+      // productos de a uno, que es lo que pasaba en producción.
+      const res = await request(app)
+        .get(`/v1/agent/conversations/${conversationId}/context?businessId=${s.businessId}`)
+        .set(key)
+        .expect(200);
+      expect(res.body.business.menu_url).toBe(`${config.FRONT_URL}/${res.body.business.slug}`);
     });
 
     it("con el businessId de otro negocio no devuelve la conversación", async () => {
