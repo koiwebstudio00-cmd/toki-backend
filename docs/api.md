@@ -448,7 +448,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; devuelve `{ duplicate: false, id, createdAt }`, o `{ duplicate: true }` si `providerMessageId` ya existe | `rest/v1/whatsapp_messages` |
 | GET | `/agent/conversations/:id` | `?businessId=` | `{ id, contactId, phone, status, handoffReason, lastMessageAt }`. El workflow lo relee antes de enviar: si una persona tomó la conversación, el bot se calla | `rest/v1/whatsapp_conversations?select=status` |
 | GET | `/agent/conversations/:id/messages` | `?businessId=&after=&direction=&limit=50` | `{ data, count }`. Con `after` + `direction=inbound` responde "¿el cliente siguió escribiendo mientras esperábamos la ráfaga?" | `rest/v1/whatsapp_messages?created_at=gt.` |
-| GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | `agent_context` | `rpc/agent_context` |
+| GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | `agent_context`, más `business.menu_url` y `active_order.track_url` armados con `FRONT_URL` | `rpc/agent_context` |
 | GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` | `rpc/agent_search_products` |
 | GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail` | `rpc/agent_product_detail` |
 | GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` | `rpc/agent_search_faq` |

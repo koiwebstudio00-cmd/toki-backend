@@ -97,6 +97,13 @@
 - **Dos correcciones de diseño:** `orderCode` pasa al cuerpo y es opcional (sin código, el último pedido editable del contacto), y `paymentMethod` vuelve a aceptar `mercadopago`.
 - **El comprobante de pago pasa de 4 nodos a 1.** 237 tests en verde. Detalle en `docs/fases/fase8.md`.
 
+**F9 terminada (2026-09-22).** El agente entiende audios e imágenes, y sabe pasar el menú.
+
+- **El link del menú digital** (`FRONT_URL` + slug) y el de seguimiento entran al contexto del turno. Ante "pasame el menú" el agente manda el link en vez de leer los productos de a uno.
+- **Los adjuntos ya no desvían el flujo: lo enriquecen.** Audio → Whisper, imagen → visión con salida JSON clasificada, y el texto resultante se concatena al mensaje. El agente corre siempre.
+- **La decisión de qué es un comprobante pasó del workflow al agente**, con la tool `guardar_comprobante`. Guardar un comprobante sigue sin significar que el pago esté acreditado.
+- **Defensa contra inyección por imagen** en el prompt de visión. Detalle en `docs/fases/fase9.md`.
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias
