@@ -67,6 +67,11 @@ export function newPaymentProofKey(businessId: string, orderCode: string | null,
   return `${businessId}/payment-proofs/${orderCode ?? "sin-pedido"}/${randomUUID()}.${ext}`;
 }
 
+/** Comprobante de una devolución que hizo el local (agente v3). Bucket privado. */
+export function newRefundProofKey(businessId: string, refundId: string, ext: string): string {
+  return `${businessId}/refund-proofs/${refundId}/${randomUUID()}.${ext}`;
+}
+
 export function publicUrl(key: string): string {
   const base = config.R2_PUBLIC_URL ?? "http://localhost:3000/dev-r2";
   return `${base.replace(/\/$/, "")}/${key}`;

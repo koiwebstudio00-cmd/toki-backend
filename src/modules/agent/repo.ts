@@ -355,3 +355,16 @@ export function latestInboundMedia(tx: Tx, businessId: string, conversationId: s
     select: { rawPayload: true, providerMessageId: true, messageType: true }
   });
 }
+
+/** Efectos de cancelar (0011): stock, cupón, puntos, quién y por qué, reembolso si estaba pagado. */
+export async function registerCancellation(
+  tx: Tx,
+  orderId: string,
+  cancelledBy: "customer_whatsapp" | "business_dashboard",
+  reason: string | null,
+  conversationId: string | null
+): Promise<{ ok: boolean; refund_id?: string | null; refund_amount?: number | string | null }> {
+  const rows = await tx.$queryRaw<{ result: { ok: boolean; refund_id?: string | null; refund_amount?: number | null } }[]>`
+    select public.register_order_cancellation(${orderId}::uuid, ${cancelledBy}, ${reason}, ${conversationId}::uuid) as result`;
+  return rows[0]!.result;
+}

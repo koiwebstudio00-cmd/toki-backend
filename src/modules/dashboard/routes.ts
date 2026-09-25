@@ -21,6 +21,12 @@ dashboardRoutes.get("/summary", async (req, res) => {
   res.json(await svc.summary(businessScope(req), days));
 });
 
+// Agente v3: cancelaciones, reembolsos, derivaciones y modificaciones.
+dashboardRoutes.get("/operations", async (req, res) => {
+  const { days } = summaryQuery.parse(req.query);
+  res.json(await svc.operations(businessScope(req), days));
+});
+
 dashboardRoutes.get("/search", async (req, res) => {
   const { q } = searchQuery.parse(req.query);
   res.json({ data: await svc.search(businessScope(req), q) });

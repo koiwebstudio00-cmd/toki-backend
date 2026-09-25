@@ -310,6 +310,7 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 | GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | `{ data: [pedido con items, opciones, historial y pagos], meta: { page, limit, total, pages } }` | `OrdersPage` |
 | GET | `/orders/:id` | M | — | Pedido completo (+ `barcode` de cada producto) | `refreshOrder` |
 | PATCH | `/orders/:id/status` | M | `{ status, note? }` | Pedido | RPC `update_order_status`. Desde 0010 no deja salir de `cancelled`. Pasar a `cancelled` devuelve el stock (`restock_order_items`) y guarda `cancelled_by = business_dashboard` y la nota como motivo |
+| POST | `/orders/:id/modification-seen` | M | — | Pedido | Agente v3: el local vio los cambios del cliente (`modification_seen_at = now()`); la tarjeta deja de destacarse |
 | POST | `/orders/:id/mark-paid` | M | — | Pedido | RPC `mark_order_paid` |
 | POST | `/orders/manual` | M | `ManualSaleInput` | `201` pedido creado | RPC `create_manual_sale` (POS) |
 | GET | `/orders/:id/payment-proofs` | M | — | `{ data: [{ id, status, mediaType, createdAt, reviewedAt, url }] }` (`url` firmada, 10 min) | `order_payment_proofs` + `createSignedUrl` |
@@ -359,6 +360,7 @@ ManualSaleInput = {
 | Método | Ruta | Auth | Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/dashboard/summary` | M | `?days=30` | `{ sales: { today, week, month }, orders: { today, pending, byStatus }, averageTicket, salesByDay: [{ date, total, count }], topProducts: [...], lowStock: { products, optionValues, ingredients }, recentOrders: [10], bot: { enabled }, conversationsCount }` | `DashboardPage` (hoy baja 30 días de pedidos y calcula en el navegador) |
+| GET | `/dashboard/operations` | M | `?days=30` | `{ days, orders: { total, cancelled, cancelRate, cancelledAmount, cancelledBy, cancelledFromStatus }, modifications: { orders, rate, duringPreparation, total }, refunds: { pending, completed (con avgHours), rejected }, cases: [{ reason, open, resolved, avgResolutionMinutes }] }` | Agente v3: cancelaciones, reembolsos, derivaciones y modificaciones, en SQL y en la zona del negocio |
 | GET | `/dashboard/search` | M | `?q=` (≥ 2 caracteres) | `{ data: [{ id, group, title, detail, href, rank }] }` | RPC `search_dashboard` |
 
 **Services:**
@@ -375,9 +377,9 @@ ManualSaleInput = {
 | GET | `/whatsapp/integration` | A | — | `{ provider, isActive, phoneNumber, connectedAt }` (sin tokens) | `whatsapp_integrations.select` |
 | POST | `/whatsapp/connect/start` | A | `{ redirectUrl, onboarding?: "business_app" \| "api" }` | `{ authUrl, state, profileId }` | Edge `zernio-whatsapp-start` |
 | POST | `/whatsapp/connect/complete` | A | `{ profileId, accountId, username?, rawQuery? }` | `{ success: true, integration }` | Edge `zernio-whatsapp-complete` |
-| GET | `/conversations` | M | `?status=open\|handoff\|closed&page=` | Conversaciones con cliente, orden por `lastMessageAt` | `ConversationsPage` |
-| GET | `/conversations/:id/messages` | M | `?before=&limit=50` | `{ data: messages, lastOrder: { orderCode, status, total } \| null }` | `whatsapp_messages.select` + `orders` por teléfono |
-| PATCH | `/conversations/:id/status` | M | `{ status: "open" \| "handoff" \| "closed" }` | Conversación | Botón Tomar/Devolver (`whatsapp_conversations.update`) |
+| GET | `/conversations` | M | `?status=open\|handoff\|closed&reason=&page=` | Conversaciones con cliente y `currentCase` (motivo, resumen, pedido y reembolsos), orden por `lastMessageAt`. `reason` filtra por motivo de derivación | `ConversationsPage` |
+| GET | `/conversations/:id/messages` | M | `?before=&limit=50` | `{ data: messages, lastOrder: { orderCode, status, total } \| null, currentCase }` | `whatsapp_messages.select` + `orders` por teléfono |
+| PATCH | `/conversations/:id/status` | M | `{ status: "open" \| "handoff" \| "closed" }` | Conversación | Botón Tomar/Devolver (`whatsapp_conversations.update`). Agente v3: pasar a `open` resuelve el caso abierto y limpia `currentCaseId` |
 
 **Services:**
 
@@ -489,7 +491,23 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 
 ---
 
-## 15. Resumen de rutas
+## 15. `cases` y `refunds` (agente v3, V3b)
+
+Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (RLS de 0010): los miembros leen casos y reembolsos; resolver un caso es de cualquier miembro, devolver o rechazar un reembolso es de owner y admin (**A**).
+
+| Método | Ruta | Auth | Body / Query | Respuesta |
+| --- | --- | --- | --- | --- |
+| POST | `/cases/:id/resolve` | M | `{ note? }` | `{ id, status: "resolved", resolvedAt, resolutionNote }`. 409 si ya estaba resuelto |
+| GET | `/refunds` | M | `?status=pending\|completed\|rejected&page=&limit=` | `{ data: [{ id, amount, reason, status, originalPaymentMethod, destination, requestedAt, completedAt, notes, proofUrl, order, case, conversationId }], meta }` (`proofUrl` firmada por 10 min) |
+| POST | `/refunds/:id/proof-upload` | A | `{ contentType }` (JPG, PNG, WebP o PDF) | `{ uploadUrl, method, headers, key, expiresIn }`: PUT directo al bucket **privado** en `<negocio>/refund-proofs/<reembolso>/` |
+| POST | `/refunds/:id/complete` | A | `{ proofKey?, notes? }` | Reembolso `completed`. La key tiene que ser la que firmó `proof-upload` para ese reembolso. Si era por cancelación, el pedido y sus pagos pasan a `refunded`. 409 si ya se cerró |
+| POST | `/refunds/:id/reject` | A | `{ notes }` (obligatorio) | Reembolso `rejected` |
+
+**Pedidos (§9), cambios de v3:** `GET /orders` y `GET /orders/:id` suman `modification: { count, lastAt, lastDuring, seen }`, `cancellation: { at, by, reason } | null` y `refunds`. `GET /orders/:id` suma `modifications` (el detalle de cada cambio). Cancelar desde el panel usa `register_order_cancellation` (0011): devuelve stock, cupón y puntos y, si estaba pagado, deja un reembolso pendiente.
+
+---
+
+## 16. Resumen de rutas
 
 | Módulo | Rutas |
 | --- | --- |
@@ -501,10 +519,12 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | coupons | 4 |
 | catalog | 16 (15 + reorder) |
 | uploads | 1 |
-| orders | 9 |
+| orders | 10 |
 | customers | 2 |
-| dashboard | 2 |
+| dashboard | 3 |
 | whatsapp | 6 |
-| agent | 20 |
+| agent | 24 |
 | public | 5 |
-| **Total** | **97** |
+| cases | 1 |
+| refunds | 4 |
+| **Total** | **108** |

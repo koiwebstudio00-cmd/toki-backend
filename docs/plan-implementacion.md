@@ -129,6 +129,15 @@
 - **Comprobante en ráfaga:** sin `mediaUrl`, se usa el último adjunto del cliente.
 - **Migración `0010`.** 314 tests en verde (30 nuevos en `test/agent-v3-pedidos.test.ts`).
 
+**Agente v3 — V3b terminada (2026-09-25).** El panel ve lo que hace el agente.
+
+- **Pedidos modificados:** `modification` en cada pedido para destacarlo en el tablero hasta que el local abre el detalle (`POST /orders/:id/modification-seen`), y `modifications` con el detalle de cada cambio.
+- **Cancelar desde el panel** usa `register_order_cancellation` (migración `0011`), la misma función que el agente: stock, cupón, puntos, quién canceló y reembolso si estaba pagado.
+- **Casos y reembolsos** en la bandeja (`currentCase`, filtro por motivo) y rutas nuevas `/cases` y `/refunds` (comprobante de la devolución en el bucket privado; devolver o rechazar es de owner y admin).
+- **Métricas** en `GET /dashboard/operations`.
+- **Front (`toki`, rama `agente-v3`):** tarjeta destacada y detalle de cambios en Pedidos, caso y reembolso con acciones en Conversaciones, bloque "Después del pedido" en el Dashboard.
+- 326 tests en verde (12 nuevos en `test/panel-v3b.test.ts`). Front: `tsc -b`, `eslint` (sin errores nuevos) y `vite build` OK; probado de punta a punta con datos de demo en el navegador.
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias

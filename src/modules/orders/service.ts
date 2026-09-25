@@ -18,7 +18,8 @@ const orderInclude = {
   },
   statusHistory: { orderBy: { createdAt: "asc" } },
   payments: { orderBy: { createdAt: "asc" } },
-  customer: { select: { id: true, name: true, phone: true, loyaltyPoints: true } }
+  customer: { select: { id: true, name: true, phone: true, loyaltyPoints: true } },
+  refunds: { orderBy: { requestedAt: "asc" } }
 } satisfies Prisma.OrderInclude;
 
 type OrderRow = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
@@ -49,6 +50,18 @@ export function toOrderDto(o: OrderRow) {
     whatsappConversationId: o.whatsappConversationId,
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
+    // Agente v3 (0010): para destacar en el tablero un pedido que el cliente
+    // cambió y que el local todavía no miró.
+    modification: {
+      count: o.modificationCount,
+      lastAt: o.modifiedAt,
+      lastDuring: o.lastModifiedDuring,
+      seen: o.modificationCount === 0 || Boolean(o.modifiedAt && o.modificationSeenAt && o.modificationSeenAt >= o.modifiedAt)
+    },
+    cancellation: o.cancelledAt
+      ? { at: o.cancelledAt, by: o.cancelledBy as "customer_whatsapp" | "business_dashboard" | null, reason: o.cancellationReason }
+      : null,
+    refunds: o.refunds.map(toRefundSummary),
     items: o.items.map((i) => ({
       id: i.id,
       productId: i.productId,
@@ -81,6 +94,22 @@ export function toOrderDto(o: OrderRow) {
       amount: toNumber(p.amount),
       createdAt: p.createdAt
     }))
+  };
+}
+
+type RefundRow = OrderRow["refunds"][number];
+
+export function toRefundSummary(r: RefundRow) {
+  return {
+    id: r.id,
+    amount: toNumber(r.amount),
+    reason: r.reason as "cancelacion" | "modificacion_baja_total" | "otro",
+    status: r.status as "pending" | "completed" | "rejected",
+    originalPaymentMethod: r.originalPaymentMethod,
+    destination: (r.destination ?? {}) as { alias?: string; cbu_cvu?: string; holder?: string },
+    requestedAt: r.requestedAt,
+    completedAt: r.completedAt,
+    notes: r.notes
   };
 }
 
@@ -130,10 +159,35 @@ export async function list({ ctx, businessId }: BusinessScope, q: ListOrdersQuer
   };
 }
 
+/** Detalle: además de lo del tablero, el historial de cambios que hizo el cliente. */
 export async function get({ ctx, businessId }: BusinessScope, id: string) {
-  const row = await withDb(ctx, (tx) => tx.order.findFirst({ where: { id, businessId }, include: orderInclude }));
+  const [row, modifications] = await withDb(ctx, async (tx) => [
+    await tx.order.findFirst({ where: { id, businessId }, include: orderInclude }),
+    await tx.orderModification.findMany({ where: { orderId: id, businessId }, orderBy: { createdAt: "asc" } })
+  ]);
   if (!row) throw notFound("El pedido no existe.");
-  return toOrderDto(row);
+  return {
+    ...toOrderDto(row),
+    modifications: modifications.map((m) => ({
+      id: m.id,
+      source: m.source as "whatsapp" | "dashboard",
+      statusAtChange: m.statusAtChange,
+      changes: m.changes,
+      subtotalBefore: toNumber(m.subtotalBefore),
+      totalBefore: toNumber(m.totalBefore),
+      totalAfter: toNumber(m.totalAfter),
+      createdAt: m.createdAt
+    }))
+  };
+}
+
+/** El local miró los cambios: la tarjeta deja de destacarse. */
+export async function markModificationSeen({ ctx, businessId }: BusinessScope, id: string) {
+  return withDb(ctx, async (tx) => {
+    const { count } = await tx.order.updateMany({ where: { id, businessId }, data: { modificationSeenAt: new Date() } });
+    if (count === 0) throw notFound("El pedido no existe.");
+    return reload(tx, businessId, id);
+  });
 }
 
 async function reload(tx: Tx, businessId: string, id: string) {
@@ -153,12 +207,10 @@ export async function changeStatus({ ctx, businessId }: BusinessScope, id: strin
     if (!current) throw notFound("El pedido no existe.");
     await tx.$executeRaw`select public.update_order_status(${id}::uuid, ${input.status}::public.order_status, ${input.note ?? null})`;
     if (input.status === "cancelled" && current.status !== "cancelled") {
-      // SECURITY DEFINER: el staff cancela pedidos pero RLS no le deja tocar productos.
-      await tx.$executeRaw`select public.restock_order_items(${id}::uuid, null)`;
-      await tx.order.update({
-        where: { id },
-        data: { cancelledAt: new Date(), cancelledBy: "business_dashboard", cancellationReason: input.note ?? null }
-      });
+      // Stock, cupón, puntos, quién canceló y reembolso si estaba pagado (0011).
+      // SECURITY DEFINER: el staff cancela pedidos pero RLS no le deja tocar
+      // productos, cupones ni clientes.
+      await tx.$queryRaw`select public.register_order_cancellation(${id}::uuid, 'business_dashboard', ${input.note ?? null}, null)`;
     }
     return reload(tx, businessId, id);
   });

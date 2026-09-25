@@ -18,6 +18,7 @@
 | `prisma/migrations/0008_agente_v3_contexto/migration.sql` | Agente v3, fase V1: búsqueda por palabras sin acentos (`agent_search_terms`, `agent_search_text`, `agent_search_products`, `agent_search_faq`), trigger que actualiza `whatsapp_order_drafts.updated_at` al cambiar un item (vencimiento del borrador a las 4 h) y `bot_settings.bot_name` por defecto `Sofi` |
 | `prisma/migrations/0009_agente_v3_borrador/migration.sql` | Agente v3, fase V2: `agent_draft_set_details` borra la dirección al pasar a retiro |
 | `prisma/migrations/0010_agente_v3_pedidos/migration.sql` | Agente v3, fase V3: `order_item_options.option_value_id` (completado por `persist_order` y `create_manual_sale`), `restock_order_items` (devuelve stock de un pedido entero o parte; por nombre para pedidos viejos), `update_order_status` no deja salir de `cancelled`, columnas de modificación y cancelación en `orders`, tablas `order_modifications`, `conversation_cases` y `order_refunds` con RLS (lectura para miembros; casos y reembolsos también editables), `whatsapp_conversations.current_case_id` y el id y la nota de cada item en `agent_order_json` |
+| `prisma/migrations/0011_panel_casos_reembolsos/migration.sql` | Agente v3, fase V3b: `register_order_cancellation` (stock, cupón, puntos, quién canceló y reembolso si estaba pagado; la usan el panel y el agente) e índice por motivo de derivación |
 | `prisma/schema.prisma` | Modelos Prisma (31) generados desde la réplica, validados con el engine de Prisma 6.19 |
 | `scripts/bootstrap-prod.sql` | Creación del rol de la API en producción |
 

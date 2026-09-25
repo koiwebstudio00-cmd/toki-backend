@@ -388,16 +388,9 @@ export async function cancelOrder(input: CancelOrderInput) {
       throw new Rejected(lockedReason(order.status, "cancelar"), { derivar: true });
     }
 
-    await repo.restock(tx, order.id, null);
     await tx.order.update({
       where: { id: order.id },
-      data: {
-        status: "cancelled",
-        cancelledAt: new Date(),
-        cancelledBy: "customer_whatsapp",
-        cancellationReason: input.reason ?? null,
-        whatsappConversationId: order.whatsappConversationId ?? input.conversationId
-      }
+      data: { status: "cancelled", whatsappConversationId: order.whatsappConversationId ?? input.conversationId }
     });
     await tx.orderStatusHistory.create({
       data: {
@@ -408,35 +401,13 @@ export async function cancelOrder(input: CancelOrderInput) {
         note: `Cancelado por el cliente vía WhatsApp${input.reason ? `: ${input.reason}` : "."}`
       }
     });
-    if (order.couponId) {
-      await tx.$executeRaw`
-        update public.coupons set used_count = greatest(0, used_count - 1)
-        where id = ${order.couponId}::uuid`;
-    }
-    if (order.customerId && order.loyaltyPointsEarned > 0) {
-      await tx.$executeRaw`
-        update public.customers
-        set loyalty_points = greatest(0, loyalty_points - ${order.loyaltyPointsEarned}::int),
-            total_spent = greatest(0, total_spent - ${order.total}::numeric),
-            updated_at = now()
-        where id = ${order.customerId}::uuid`;
-    }
+    // Stock, cupón, puntos, quién canceló y reembolso: lo mismo que el panel (0011).
+    const effects = await repo.registerCancellation(tx, order.id, "customer_whatsapp", input.reason ?? null, input.conversationId);
 
     const extra: Json = {};
-    if (order.paymentStatus === "paid") {
-      const amount = (await repo.paidAmount(tx, order.id)) || toNumber(order.total);
-      await tx.orderRefund.create({
-        data: {
-          businessId: input.businessId,
-          orderId: order.id,
-          conversationId: input.conversationId,
-          amount,
-          reason: "cancelacion",
-          originalPaymentMethod: order.paymentMethod
-        }
-      });
+    if (effects.refund_id) {
       extra.reembolso = true;
-      extra.monto_reembolso = amount;
+      extra.monto_reembolso = Number(effects.refund_amount);
     }
 
     return { ok: true as const, orderCode: order.orderCode, estado: "cancelado", ...extra };
