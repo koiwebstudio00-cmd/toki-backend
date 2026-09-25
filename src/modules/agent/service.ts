@@ -23,11 +23,12 @@ import {
   DRAFT_TTL_HOURS,
   etaFromLocal,
   isFullUuid,
+  mediaUrlFromPayload,
   orderEta,
   shortRefs,
-  statusLabel,
   toneLabel
 } from "./context.js";
+import { decorateOrder } from "./orders.js";
 import * as repo from "./repo.js";
 import type {
   DraftAddItemInput,
@@ -262,10 +263,9 @@ export async function context(businessId: string, conversationId: string, k: num
       handoff_enabled: bot?.handoffEnabled ?? true
     };
 
-    const order = result.active_order as Json | null | undefined;
+    const order = decorateOrder(result.active_order as Json | null | undefined);
     if (order) {
       const status = String(order.status ?? "");
-      order.status_label = statusLabel(status, order.order_type as string | null);
       const minutes = business.estimated_delivery_minutes as number | null;
       // Un pedido que espera a que abra el local sale a partir de la apertura.
       order.eta =
@@ -339,10 +339,21 @@ export async function productDetail(businessId: string, productRef: string) {
 export const searchFaq = (businessId: string, q: string | undefined, limit: number) =>
   rpc(Prisma.sql`select public.agent_search_faq(${businessId}::uuid, ${q ?? ""}, ${limit}) as result`);
 
-export const orderStatus = (businessId: string, conversationId: string, orderCode?: string) =>
-  rpc(
-    Prisma.sql`select public.agent_order_status(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
-  );
+/** Estado del pedido, con el estado en palabras, si se puede cambiar o cancelar y el link de seguimiento. */
+export async function orderStatus(businessId: string, conversationId: string, orderCode?: string) {
+  return withDb(systemCtx, async (tx) => {
+    const rows = await tx.$queryRaw<{ result: Json }[]>(
+      Prisma.sql`select public.agent_order_status(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
+    );
+    const result = rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+    const order = decorateOrder(result.pedido as Json | null);
+    if (order && typeof order.order_code === "string") {
+      const business = await tx.business.findUnique({ where: { id: businessId }, select: { slug: true } });
+      if (business) order.track_url = `${config.FRONT_URL.replace(/\/+$/, "")}/${business.slug}/order/${order.order_code}`;
+    }
+    return result;
+  });
+}
 
 // ── Borrador ────────────────────────────────────────────────────────────────
 
@@ -589,11 +600,6 @@ export const addDraftItemsToOrder = (businessId: string, conversationId: string,
     Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
   );
 
-export const handoff = (businessId: string, conversationId: string, reason?: string | null) =>
-  rpc(
-    Prisma.sql`select public.agent_conversation_handoff(${businessId}::uuid, ${conversationId}::uuid, ${reason ?? null}) as result`
-  );
-
 // ── Comprobantes de pago ────────────────────────────────────────────────────
 
 const PROOF_EXTENSIONS: Record<string, string> = {
@@ -623,30 +629,54 @@ async function resolveOrder(tx: Tx, businessId: string, conversationId: string, 
  * el negocio lo revise. Solo se guarda si hay un pedido al que atarlo: un
  * comprobante suelto no le sirve a nadie.
  */
+/** Cuánto hacia atrás se busca el adjunto cuando el agente no manda la URL. */
+const PROOF_LOOKBACK_MS = 10 * 60_000;
+
 export async function savePaymentProof(input: PaymentProofInput) {
   const prepared = await withDb(systemCtx, async (tx) => {
-    if (input.providerMessageId) {
-      const already = await tx.orderPaymentProof.findFirst({
-        where: { businessId: input.businessId, providerMessageId: input.providerMessageId },
-        select: { id: true }
-      });
-      if (already) return { kind: "duplicate" as const, id: already.id };
-    }
     const conversation = await tx.whatsappConversation.count({
       where: { id: input.conversationId, businessId: input.businessId }
     });
     if (conversation === 0) return { kind: "error" as const, error: "Conversación inválida." };
 
+    // Sin URL (v3): el comprobante pudo llegar en otro mensaje de la ráfaga.
+    // Se toma la última imagen o PDF del cliente de los últimos minutos.
+    let mediaUrl = input.mediaUrl ?? null;
+    let mediaType = input.mediaType;
+    let providerMessageId = input.providerMessageId ?? null;
+    if (!mediaUrl) {
+      const media = await repo.latestInboundMedia(
+        tx,
+        input.businessId,
+        input.conversationId,
+        new Date(Date.now() - PROOF_LOOKBACK_MS)
+      );
+      mediaUrl = mediaUrlFromPayload(media?.rawPayload);
+      if (!media || !mediaUrl) {
+        return { kind: "error" as const, error: "No encontré una imagen o PDF reciente del cliente para guardar como comprobante." };
+      }
+      mediaType = media.messageType;
+      providerMessageId ??= media.providerMessageId;
+    }
+
+    if (providerMessageId) {
+      const already = await tx.orderPaymentProof.findFirst({
+        where: { businessId: input.businessId, providerMessageId },
+        select: { id: true }
+      });
+      if (already) return { kind: "duplicate" as const, id: already.id };
+    }
+
     const order = await resolveOrder(tx, input.businessId, input.conversationId, input.orderCode);
     if (!order) return { kind: "error" as const, error: "No encontré un pedido al que asociar el comprobante." };
-    return { kind: "ready" as const, order };
+    return { kind: "ready" as const, order, mediaUrl, mediaType, providerMessageId };
   });
 
   if (prepared.kind === "duplicate") return { ok: true as const, duplicate: true, id: prepared.id };
   if (prepared.kind === "error") return fail(prepared.error);
 
   // La descarga y la subida quedan FUERA de la transacción: son llamadas de red.
-  const { body, contentType } = await zernioDownload(input.mediaUrl);
+  const { body, contentType } = await zernioDownload(prepared.mediaUrl);
   const extension = PROOF_EXTENSIONS[contentType.split(";")[0]!.trim()];
   if (!extension) return fail("El archivo no es una imagen ni un PDF.");
 
@@ -661,8 +691,8 @@ export async function savePaymentProof(input: PaymentProofInput) {
           orderId: prepared.order.id,
           conversationId: input.conversationId,
           storagePath: key,
-          mediaType: input.mediaType,
-          providerMessageId: input.providerMessageId ?? null
+          mediaType: prepared.mediaType,
+          providerMessageId: prepared.providerMessageId
         },
         select: { id: true }
       })

@@ -203,3 +203,155 @@ export function transferSettings(tx: Tx, businessId: string) {
     select: { transferAlias: true, transferCbu: true, transferHolder: true, transferBank: true }
   });
 }
+
+// ── Pedidos hechos (v3) ─────────────────────────────────────────────────────
+
+const ORDER_CODE = /TK-\d{6}/i;
+
+/** Código TK-XXXXXX normalizado, o null si el texto no trae uno. */
+export function normalizeOrderCode(value: string | null | undefined): string | null {
+  const match = (value ?? "").match(ORDER_CODE);
+  return match ? match[0].toUpperCase() : null;
+}
+
+/**
+ * El pedido del que habla el cliente: el del código si lo dio (cualquier
+ * estado, siempre del negocio), o el último en curso de la conversación o de
+ * su teléfono (un pedido hecho en la web también cuenta).
+ */
+export async function resolveOrderId(
+  tx: Tx,
+  businessId: string,
+  conversationId: string,
+  orderCode?: string | null
+): Promise<string | null> {
+  const code = normalizeOrderCode(orderCode);
+  if (code) {
+    const order = await tx.order.findFirst({ where: { businessId, orderCode: code }, select: { id: true } });
+    return order?.id ?? null;
+  }
+  const conversation = await tx.whatsappConversation.findFirst({
+    where: { id: conversationId, businessId },
+    select: { phone: true }
+  });
+  const order = await tx.order.findFirst({
+    where: {
+      businessId,
+      status: { notIn: ["delivered", "cancelled"] },
+      OR: [
+        { whatsappConversationId: conversationId },
+        ...(conversation?.phone ? [{ customerPhone: conversation.phone }] : [])
+      ]
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true }
+  });
+  return order?.id ?? null;
+}
+
+/** Bloquea el pedido hasta el fin de la transacción: dos cambios a la vez no se pisan. */
+export async function lockOrder(tx: Tx, orderId: string): Promise<void> {
+  await tx.$queryRaw`select id from public.orders where id = ${orderId}::uuid for update`;
+}
+
+export function orderForChange(tx: Tx, orderId: string) {
+  return tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: {
+      items: { orderBy: { createdAt: "asc" }, include: { options: true } },
+      coupon: true,
+      business: { select: { deliveryFee: true, minimumOrderAmount: true } }
+    }
+  });
+}
+
+export async function orderJson(tx: Tx, orderId: string) {
+  const rows = await tx.$queryRaw<{ result: Record<string, unknown> | null }[]>`
+    select public.agent_order_json(${orderId}::uuid) as result`;
+  return rows[0]?.result ?? null;
+}
+
+/** Devuelve stock: el pedido entero (`items` null) o parte ([{ orderItemId, quantity }]). */
+export async function restock(tx: Tx, orderId: string, items: { orderItemId: string; quantity: number }[] | null) {
+  await tx.$executeRaw`select public.restock_order_items(${orderId}::uuid, ${items ? JSON.stringify(items) : null}::jsonb)`;
+}
+
+/** Descuenta stock como persist_order: solo donde se controla, y pausa lo que llega a 0. */
+export async function deductStock(
+  tx: Tx,
+  businessId: string,
+  entries: { productId: string | null; optionValueIds: string[]; quantity: number }[]
+) {
+  for (const entry of entries) {
+    if (entry.productId) {
+      await tx.$executeRaw`
+        update public.products
+        set stock_quantity = greatest(0, stock_quantity - ${entry.quantity}::int),
+            is_available = case when stock_quantity - ${entry.quantity}::int <= 0 then false else is_available end,
+            updated_at = now()
+        where id = ${entry.productId}::uuid and business_id = ${businessId}::uuid and track_stock`;
+    }
+    for (const valueId of entry.optionValueIds) {
+      await tx.$executeRaw`
+        update public.product_option_values
+        set stock_quantity = greatest(0, stock_quantity - ${entry.quantity}::int),
+            is_available = case when stock_quantity - ${entry.quantity}::int <= 0 then false else is_available end,
+            updated_at = now()
+        where id = ${valueId}::uuid and business_id = ${businessId}::uuid and track_stock`;
+    }
+  }
+}
+
+/** Stock disponible de un producto y sus valores, para subir una cantidad. */
+export function stockFor(tx: Tx, businessId: string, productId: string | null, valueIds: string[]) {
+  return Promise.all([
+    productId
+      ? tx.product.findFirst({
+          where: { id: productId, businessId },
+          select: { name: true, trackStock: true, stockQuantity: true }
+        })
+      : Promise.resolve(null),
+    valueIds.length
+      ? tx.productOptionValue.findMany({
+          where: { id: { in: valueIds }, businessId },
+          select: { name: true, trackStock: true, stockQuantity: true }
+        })
+      : Promise.resolve([])
+  ]);
+}
+
+export function paymentSettings(tx: Tx, businessId: string) {
+  return tx.paymentSettings.findUnique({ where: { businessId } });
+}
+
+export async function paidAmount(tx: Tx, orderId: string): Promise<number> {
+  const agg = await tx.payment.aggregate({ where: { orderId, status: "paid" }, _sum: { amount: true } });
+  return Number(agg._sum.amount ?? 0);
+}
+
+/** Último reembolso pendiente de la conversación (o de un pedido puntual). */
+export function pendingRefund(tx: Tx, businessId: string, conversationId: string, orderId: string | null) {
+  return tx.orderRefund.findFirst({
+    where: {
+      businessId,
+      status: "pending",
+      ...(orderId ? { orderId } : { OR: [{ conversationId }, { order: { whatsappConversationId: conversationId } }] })
+    },
+    orderBy: { requestedAt: "desc" }
+  });
+}
+
+/** Último adjunto (imagen o PDF) que mandó el cliente, para el comprobante mandado en ráfaga. */
+export function latestInboundMedia(tx: Tx, businessId: string, conversationId: string, since: Date) {
+  return tx.whatsappMessage.findFirst({
+    where: {
+      businessId,
+      conversationId,
+      direction: "inbound",
+      messageType: { in: ["image", "document"] },
+      createdAt: { gte: since }
+    },
+    orderBy: { createdAt: "desc" },
+    select: { rawPayload: true, providerMessageId: true, messageType: true }
+  });
+}

@@ -142,12 +142,24 @@ async function reload(tx: Tx, businessId: string, id: string) {
   return toOrderDto(row);
 }
 
-/** `update_order_status` valida membresía y escribe el historial. */
+/**
+ * `update_order_status` valida membresía y escribe el historial (y no deja
+ * reactivar un pedido cancelado, migración 0010). Cancelar desde el panel
+ * devuelve el stock y deja registrado que lo canceló el local.
+ */
 export async function changeStatus({ ctx, businessId }: BusinessScope, id: string, input: ChangeStatusInput) {
   return withDb(ctx, async (tx) => {
-    const exists = await tx.order.count({ where: { id, businessId } });
-    if (exists === 0) throw notFound("El pedido no existe.");
+    const current = await tx.order.findFirst({ where: { id, businessId }, select: { status: true } });
+    if (!current) throw notFound("El pedido no existe.");
     await tx.$executeRaw`select public.update_order_status(${id}::uuid, ${input.status}::public.order_status, ${input.note ?? null})`;
+    if (input.status === "cancelled" && current.status !== "cancelled") {
+      // SECURITY DEFINER: el staff cancela pedidos pero RLS no le deja tocar productos.
+      await tx.$executeRaw`select public.restock_order_items(${id}::uuid, null)`;
+      await tx.order.update({
+        where: { id },
+        data: { cancelledAt: new Date(), cancelledBy: "business_dashboard", cancellationReason: input.note ?? null }
+      });
+    }
     return reload(tx, businessId, id);
   });
 }

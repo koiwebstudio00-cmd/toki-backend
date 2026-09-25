@@ -304,6 +304,21 @@ export function etaFromLocal(at: string, minutes: number): string {
   return new Date(Date.parse(`${at}:00Z`) + minutes * MINUTE).toISOString().slice(11, 16);
 }
 
+/**
+ * URL del adjunto dentro del payload crudo de Zernio que guarda el workflow
+ * (mismas rutas que lee `Normalize Inbound`).
+ */
+export function mediaUrlFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const body = payload as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const data = body.data ?? {};
+  const message = body.message ?? data.message ?? body.messages?.[0] ?? {};
+  const attachments = message.attachments ?? body.attachments ?? data.attachments ?? [];
+  if (!Array.isArray(attachments)) return null;
+  const found = attachments.find((a) => a && typeof a.url === "string" && a.url);
+  return found ? String(found.url) : null;
+}
+
 // ── Tono ────────────────────────────────────────────────────────────────────
 
 /** `bot_settings.tone` es texto libre; los valores de fábrica se traducen. */

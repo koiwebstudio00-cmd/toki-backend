@@ -137,13 +137,63 @@ export const addDraftItemsSchema = z.object({
 
 export const handoffSchema = z.object({
   businessId,
-  reason: z.string().trim().max(120).nullable().optional()
+  reason: z.string().trim().max(120).nullable().optional(),
+  // v3: el pedido del que se trata (si lo hay) y una línea para el local.
+  orderCode: z.string().trim().max(20).nullable().optional(),
+  summary: z.string().trim().max(500).nullable().optional()
 });
+
+/** Lista que puede venir como texto JSON desde n8n. */
+const jsonList = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return [];
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }, z.array(schema).max(20));
+
+/** v3: cambios sobre un pedido hecho, todos en una llamada. */
+export const modifyOrderSchema = z.object({
+  businessId,
+  conversationId,
+  orderCode: z.string().trim().max(20).nullable().optional(),
+  add: jsonList(draftItem).default([]),
+  remove: jsonList(uuid("Ese producto ya no está en el pedido.")).default([]),
+  quantities: jsonList(
+    z.object({ itemId: uuid("Ese producto ya no está en el pedido."), quantity: z.coerce.number().int().min(0).max(50) })
+  ).default([]),
+  orderType: z.enum(["delivery", "takeaway"]).nullable().optional(),
+  deliveryAddress: z.string().trim().max(300).nullable().optional(),
+  paymentMethod: z.enum(["cash", "transfer", "mercadopago"]).nullable().optional()
+});
+
+export const cancelOrderSchema = z.object({
+  businessId,
+  conversationId,
+  orderCode: z.string().trim().max(20).nullable().optional(),
+  reason: z.string().trim().max(300).nullable().optional()
+});
+
+export const refundDestinationSchema = z
+  .object({
+    businessId,
+    conversationId,
+    orderCode: z.string().trim().max(20).nullable().optional(),
+    alias: z.string().trim().max(60).nullable().optional(),
+    cbuCvu: z.string().trim().max(40).nullable().optional(),
+    holder: z.string().trim().max(120).nullable().optional()
+  })
+  .refine((v) => Boolean(v.alias || v.cbuCvu), { message: "Falta el alias o el CBU/CVU.", path: ["alias"] });
 
 export const paymentProofSchema = z.object({
   businessId,
   conversationId,
-  mediaUrl: z.string().url("La URL del adjunto no es válida."),
+  // v3: opcional. Sin URL se usa la última imagen o PDF que mandó el cliente
+  // (el comprobante puede llegar en una ráfaga y no en este mensaje).
+  mediaUrl: z.string().url("La URL del adjunto no es válida.").nullable().optional(),
   mediaType: z.string().trim().max(40).default("image"),
   orderCode: z.string().trim().max(20).nullable().optional(),
   providerMessageId: z.string().trim().max(200).nullable().optional()
@@ -156,3 +206,7 @@ export type DraftAddItemsInput = z.infer<typeof draftAddItemsSchema>;
 export type DraftDetailsInput = z.infer<typeof draftDetailsSchema>;
 export type OrderDetailsInput = z.infer<typeof orderDetailsSchema>;
 export type PaymentProofInput = z.infer<typeof paymentProofSchema>;
+export type ModifyOrderInput = z.infer<typeof modifyOrderSchema>;
+export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+export type HandoffInput = z.infer<typeof handoffSchema>;
+export type RefundDestinationInput = z.infer<typeof refundDestinationSchema>;

@@ -12,11 +12,11 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
   // Los scripts de migración setean DATABASE_URL = DATABASE_URL_MIGRATE (rol dueño).
   // En runtime la conexión la arma src/lib/db.ts con el adapter, no esta URL.
-  url       = env("DATABASE_URL")
-  schemas   = ["auth", "public"]
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "public"]
 }
 
 enum business_role {
@@ -192,6 +192,9 @@ model Business {
   whatsappMessages          WhatsappMessage[]
   whatsappOrderDraftItems   WhatsappOrderDraftItem[]
   whatsappOrderDrafts       WhatsappOrderDraft[]
+  orderModifications        OrderModification[]
+  conversationCases         ConversationCase[]
+  orderRefunds              OrderRefund[]
 
   @@index([slug], map: "idx_businesses_slug")
   @@map("businesses")
@@ -312,15 +315,17 @@ model LoyaltySettings {
 }
 
 model OrderItemOption {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  businessId  String    @map("business_id") @db.Uuid
-  orderItemId String    @map("order_item_id") @db.Uuid
-  optionName  String    @map("option_name")
-  valueName   String    @map("value_name")
-  priceDelta  Decimal   @default(0) @map("price_delta") @db.Decimal(12, 2)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId    String              @map("business_id") @db.Uuid
+  orderItemId   String              @map("order_item_id") @db.Uuid
+  optionName    String              @map("option_name")
+  valueName     String              @map("value_name")
+  priceDelta    Decimal             @default(0) @map("price_delta") @db.Decimal(12, 2)
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  optionValueId String?             @map("option_value_id") @db.Uuid
+  business      Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderItem     OrderItem           @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  optionValue   ProductOptionValue? @relation(fields: [optionValueId], references: [id], onDelete: SetNull)
 
   @@map("order_item_options")
   @@schema("public")
@@ -348,21 +353,21 @@ model OrderItem {
 }
 
 model OrderPaymentProof {
-  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  businessId     String                @map("business_id") @db.Uuid
-  orderId        String                @map("order_id") @db.Uuid
-  conversationId String?               @map("conversation_id") @db.Uuid
-  storagePath    String                @map("storage_path")
-  mediaType      String                @default("image") @map("media_type")
-  status            String             @default("pending")
-  providerMessageId String?            @map("provider_message_id")
-  reviewedAt     DateTime?             @map("reviewed_at") @db.Timestamptz(6)
-  reviewedBy     String?               @map("reviewed_by") @db.Uuid
-  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  business       Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  conversation   WhatsappConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  reviewer       Profile?              @relation(fields: [reviewedBy], references: [id], onDelete: SetNull)
+  id                String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId        String                @map("business_id") @db.Uuid
+  orderId           String                @map("order_id") @db.Uuid
+  conversationId    String?               @map("conversation_id") @db.Uuid
+  storagePath       String                @map("storage_path")
+  mediaType         String                @default("image") @map("media_type")
+  status            String                @default("pending")
+  providerMessageId String?               @map("provider_message_id")
+  reviewedAt        DateTime?             @map("reviewed_at") @db.Timestamptz(6)
+  reviewedBy        String?               @map("reviewed_by") @db.Uuid
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  business          Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation      WhatsappConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  order             Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reviewer          Profile?              @relation(fields: [reviewedBy], references: [id], onDelete: SetNull)
 
   @@index([businessId], map: "idx_order_payment_proofs_business_id")
   @@index([orderId, createdAt], map: "idx_order_payment_proofs_order_id")
@@ -414,6 +419,13 @@ model Order {
   loyaltyPointsEarned    Int                   @default(0) @map("loyalty_points_earned")
   loyaltyPointsRedeemed  Int                   @default(0) @map("loyalty_points_redeemed")
   whatsappConversationId String?               @map("whatsapp_conversation_id") @db.Uuid
+  modifiedAt             DateTime?             @map("modified_at") @db.Timestamptz(6)
+  modificationCount      Int                   @default(0) @map("modification_count")
+  lastModifiedDuring     order_status?         @map("last_modified_during")
+  modificationSeenAt     DateTime?             @map("modification_seen_at") @db.Timestamptz(6)
+  cancelledAt            DateTime?             @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy            String?               @map("cancelled_by")
+  cancellationReason     String?               @map("cancellation_reason")
   business               Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
   coupon                 Coupon?               @relation(fields: [couponId], references: [id], onDelete: SetNull)
   customer               Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -423,6 +435,9 @@ model Order {
   statusHistory          OrderStatusHistory[]
   payments               Payment[]
   whatsappDrafts         WhatsappOrderDraft[]
+  modifications          OrderModification[]
+  cases                  ConversationCase[]
+  refunds                OrderRefund[]
 
   @@index([orderCode], map: "idx_orders_order_code")
   @@index([whatsappConversationId], map: "idx_orders_whatsapp_conversation_id")
@@ -469,20 +484,21 @@ model Payment {
 }
 
 model ProductOptionValue {
-  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  businessId        String        @map("business_id") @db.Uuid
-  optionId          String        @map("option_id") @db.Uuid
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId        String            @map("business_id") @db.Uuid
+  optionId          String            @map("option_id") @db.Uuid
   name              String
-  priceDelta        Decimal       @default(0) @map("price_delta") @db.Decimal(12, 2)
-  isAvailable       Boolean       @default(true) @map("is_available")
-  sortOrder         Int           @default(0) @map("sort_order")
-  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
-  trackStock        Boolean       @default(false) @map("track_stock")
-  stockQuantity     Int           @default(0) @map("stock_quantity")
-  lowStockThreshold Int           @default(5) @map("low_stock_threshold")
-  business          Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  option            ProductOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  priceDelta        Decimal           @default(0) @map("price_delta") @db.Decimal(12, 2)
+  isAvailable       Boolean           @default(true) @map("is_available")
+  sortOrder         Int               @default(0) @map("sort_order")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+  trackStock        Boolean           @default(false) @map("track_stock")
+  stockQuantity     Int               @default(0) @map("stock_quantity")
+  lowStockThreshold Int               @default(5) @map("low_stock_threshold")
+  business          Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  option            ProductOption     @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  orderItemOptions  OrderItemOption[]
 
   @@index([businessId, trackStock, stockQuantity], map: "idx_option_values_low_stock")
   @@index([optionId], map: "idx_option_values_option_id")
@@ -552,6 +568,8 @@ model Profile {
   phone                 String?
   user                  User                @relation(fields: [id], references: [id], onDelete: Cascade)
   reviewedPaymentProofs OrderPaymentProof[]
+  resolvedCases         ConversationCase[]
+  completedRefunds      OrderRefund[]
 
   @@map("profiles")
   @@schema("public")
@@ -568,7 +586,12 @@ model WhatsappConversation {
   updatedAt           DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
   contactId           String              @map("contact_id")
   handoffReason       String?             @map("handoff_reason")
+  currentCaseId       String?             @map("current_case_id") @db.Uuid
   business            Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  currentCase         ConversationCase?   @relation("CurrentCase", fields: [currentCaseId], references: [id], onDelete: SetNull)
+  cases               ConversationCase[]  @relation("ConversationCases")
+  modifications       OrderModification[]
+  refunds             OrderRefund[]
   customer            Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
   paymentProofs       OrderPaymentProof[]
   orders              Order[]
@@ -719,3 +742,81 @@ model EmailToken {
 //   CREATE UNIQUE INDEX uq_whatsapp_messages_provider_message_id ON public.whatsapp_messages USING btree (business_id, provider_message_id) WHERE (provider_message_id IS NOT NULL)
 //   CREATE INDEX idx_refresh_tokens_user ON auth.refresh_tokens (user_id) WHERE revoked_at IS NULL
 //   CREATE INDEX idx_email_tokens_user_purpose ON auth.email_tokens (user_id, purpose) WHERE used_at IS NULL
+
+/// Detalle de cada modificación de un pedido hecha por el cliente (agente v3, 0010).
+model OrderModification {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId     String                @map("business_id") @db.Uuid
+  orderId        String                @map("order_id") @db.Uuid
+  source         String
+  conversationId String?               @map("conversation_id") @db.Uuid
+  statusAtChange order_status          @map("status_at_change")
+  changes        Json                  @default("{}")
+  subtotalBefore Decimal               @map("subtotal_before") @db.Decimal(12, 2)
+  totalBefore    Decimal               @map("total_before") @db.Decimal(12, 2)
+  totalAfter     Decimal               @map("total_after") @db.Decimal(12, 2)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  business       Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  conversation   WhatsappConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt], map: "order_modifications_order_idx")
+  @@index([businessId, createdAt], map: "order_modifications_business_idx")
+  @@map("order_modifications")
+  @@schema("public")
+}
+
+/// Derivación a una persona: motivo, pedido asociado y resolución (agente v3, 0010).
+model ConversationCase {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId     String                 @map("business_id") @db.Uuid
+  conversationId String                 @map("conversation_id") @db.Uuid
+  orderId        String?                @map("order_id") @db.Uuid
+  reason         String
+  summary        String?
+  status         String                 @default("open")
+  openedAt       DateTime               @default(now()) @map("opened_at") @db.Timestamptz(6)
+  resolvedAt     DateTime?              @map("resolved_at") @db.Timestamptz(6)
+  resolvedBy     String?                @map("resolved_by") @db.Uuid
+  resolutionNote String?                @map("resolution_note")
+  business       Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation   WhatsappConversation   @relation("ConversationCases", fields: [conversationId], references: [id], onDelete: Cascade)
+  order          Order?                 @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  resolver       Profile?               @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  currentOf      WhatsappConversation[] @relation("CurrentCase")
+  refunds        OrderRefund[]
+
+  @@index([businessId, openedAt], map: "conversation_cases_business_idx")
+  @@index([conversationId, openedAt], map: "conversation_cases_conversation_idx")
+  @@map("conversation_cases")
+  @@schema("public")
+}
+
+/// Reembolso pendiente o hecho de un pedido (agente v3, 0010).
+model OrderRefund {
+  id                    String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId            String                @map("business_id") @db.Uuid
+  orderId               String                @map("order_id") @db.Uuid
+  caseId                String?               @map("case_id") @db.Uuid
+  conversationId        String?               @map("conversation_id") @db.Uuid
+  amount                Decimal               @db.Decimal(12, 2)
+  reason                String
+  originalPaymentMethod payment_method        @map("original_payment_method")
+  destination           Json                  @default("{}")
+  status                String                @default("pending")
+  requestedAt           DateTime              @default(now()) @map("requested_at") @db.Timestamptz(6)
+  completedAt           DateTime?             @map("completed_at") @db.Timestamptz(6)
+  completedBy           String?               @map("completed_by") @db.Uuid
+  proofStoragePath      String?               @map("proof_storage_path")
+  notes                 String?
+  business              Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order                 Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  case                  ConversationCase?     @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  conversation          WhatsappConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  completer             Profile?              @relation(fields: [completedBy], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status, requestedAt], map: "order_refunds_business_idx")
+  @@index([orderId], map: "order_refunds_order_idx")
+  @@map("order_refunds")
+  @@schema("public")
+}

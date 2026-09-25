@@ -120,6 +120,15 @@
 - **Pedidos con el local cerrado:** se confirman y quedan para la apertura, con la hora estimada calculada desde ahí. Cerrado a mano desde el panel sigue sin tomar pedidos.
 - **Confirmar devuelve** hora estimada, link de seguimiento y datos de transferencia. 284 tests en verde (12 nuevos).
 
+**Agente v3 — V3 terminada (2026-09-25).**
+
+- **Modificar un pedido hecho** en una llamada (`POST /agent/orders/modify`) mientras esté en `pending`, `confirmed` o `preparing`: sumar, sacar, cantidades, entrega, dirección y pago. Todo se valida antes de escribir. Queda registrado en `order_modifications` y en el resumen de `orders` (para destacarlo en el panel, V3b).
+- **Cancelar** (`POST /agent/orders/cancel`) solo en `pending`: devuelve stock, cupón y puntos.
+- **Stock de opciones devolvible:** `order_item_options.option_value_id` y `restock_order_items`, usada también al cancelar desde el panel. Un pedido cancelado ya no se puede reactivar.
+- **Casos y reembolsos:** cada derivación crea un `conversation_cases` con motivo, pedido y resumen; un pedido pagado que se cancela o baja de total deja un `order_refunds` pendiente con los datos de destino.
+- **Comprobante en ráfaga:** sin `mediaUrl`, se usa el último adjunto del cliente.
+- **Migración `0010`.** 314 tests en verde (30 nuevos en `test/agent-v3-pedidos.test.ts`).
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias

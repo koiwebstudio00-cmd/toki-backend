@@ -17,11 +17,15 @@ import {
   messagesQuery,
   orderDetailsSchema,
   orderStatusQuery,
+  cancelOrderSchema,
+  modifyOrderSchema,
   paymentProofSchema,
+  refundDestinationSchema,
   productRefParam,
   searchQuery,
   upsertConversationSchema
 } from "./schemas.js";
+import * as orders from "./orders.js";
 import * as svc from "./service.js";
 
 /** /v1/agent — n8n, autenticado con X-Api-Key. */
@@ -59,10 +63,10 @@ agentRoutes.get("/conversations/:id/context", async (req, res) => {
   res.json(await svc.context(businessId, id, k));
 });
 
+// v3: crea un caso con motivo, pedido y resumen.
 agentRoutes.post("/conversations/:id/handoff", async (req, res) => {
   const { id } = idParam.parse(req.params);
-  const { businessId, reason } = handoffSchema.parse(req.body);
-  res.json(await svc.handoff(businessId, id, reason));
+  res.json(await orders.handoff({ ...handoffSchema.parse(req.body), conversationId: id }));
 });
 
 // Catálogo
@@ -146,6 +150,21 @@ agentRoutes.patch("/orders", async (req, res) => {
 agentRoutes.post("/orders/items", async (req, res) => {
   const { businessId, conversationId, orderCode } = addDraftItemsSchema.parse(req.body);
   res.json(await svc.addDraftItemsToOrder(businessId, conversationId, orderCode));
+});
+
+// v3: cambios sobre un pedido hecho (pending, confirmed o preparing).
+agentRoutes.post("/orders/modify", async (req, res) => {
+  res.json(await orders.modifyOrder(modifyOrderSchema.parse(req.body)));
+});
+
+// v3: cancelar un pedido que el local todavía no aceptó.
+agentRoutes.post("/orders/cancel", async (req, res) => {
+  res.json(await orders.cancelOrder(cancelOrderSchema.parse(req.body)));
+});
+
+// v3: a dónde devolver la plata del reembolso pendiente.
+agentRoutes.patch("/refunds/current", async (req, res) => {
+  res.json(await orders.setRefundDestination(refundDestinationSchema.parse(req.body)));
 });
 
 agentRoutes.post("/payment-proofs", async (req, res) => {
