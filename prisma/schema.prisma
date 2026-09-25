@@ -81,7 +81,7 @@ model BotSettings {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   businessId      String   @unique @map("business_id") @db.Uuid
   isEnabled       Boolean  @default(true) @map("is_enabled")
-  botName         String   @default("Toki") @map("bot_name")
+  botName         String   @default("Sofi") @map("bot_name")
   tone            String   @default("friendly")
   fallbackMessage String   @default("Te derivo con una persona del equipo para que pueda ayudarte.") @map("fallback_message")
   handoffEnabled  Boolean  @default(true) @map("handoff_enabled")

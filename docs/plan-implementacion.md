@@ -104,6 +104,14 @@
 - **La decisión de qué es un comprobante pasó del workflow al agente**, con la tool `guardar_comprobante`. Guardar un comprobante sigue sin significar que el pago esté acreditado.
 - **Defensa contra inyección por imagen** en el prompt de visión. Detalle en `docs/fases/fase9.md`.
 
+**Agente v3 — V1 terminada (2026-09-25).** Plan completo en `toki-agents/docs/12-plan-agente-v3.md`.
+
+- **Contexto nuevo** (`GET /agent/conversations/:id/context`): hora local del negocio y si está abierto, hasta cuándo o cuándo abre; la carta completa con ids cortos y opciones (hasta 50 productos, después un resumen); nombre (Sofi) y tono del bot; estado legible y hora estimada del pedido activo.
+- **Ids cortos** en `/products/:id` y `/draft/items`, resueltos dentro del negocio.
+- **Búsqueda por palabras** en productos y FAQs: sin acentos, con plurales y errores de tipeo.
+- **El borrador vence a las 4 h sin cambios**; un trigger nuevo cuenta agregar o sacar un item como cambio.
+- **Migración `0008`.** 272 tests en verde (36 nuevos en `test/agent-v3.test.ts`); los 2 de comprobantes fallan solo en el sandbox porque no hay red hacia R2.
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias

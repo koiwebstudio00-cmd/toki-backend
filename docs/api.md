@@ -448,13 +448,13 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; devuelve `{ duplicate: false, id, createdAt }`, o `{ duplicate: true }` si `providerMessageId` ya existe | `rest/v1/whatsapp_messages` |
 | GET | `/agent/conversations/:id` | `?businessId=` | `{ id, contactId, phone, status, handoffReason, lastMessageAt }`. El workflow lo relee antes de enviar: si una persona tomó la conversación, el bot se calla | `rest/v1/whatsapp_conversations?select=status` |
 | GET | `/agent/conversations/:id/messages` | `?businessId=&after=&direction=&limit=50` | `{ data, count }`. Con `after` + `direction=inbound` responde "¿el cliente siguió escribiendo mientras esperábamos la ráfaga?" | `rest/v1/whatsapp_messages?created_at=gt.` |
-| GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | `agent_context`, más `business.menu_url` y `active_order.track_url` armados con `FRONT_URL` | `rpc/agent_context` |
-| GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` | `rpc/agent_search_products` |
-| GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail` | `rpc/agent_product_detail` |
-| GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` | `rpc/agent_search_faq` |
+| GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | Primero descarta el borrador si pasaron 4 h sin cambios. Después `agent_context`, más (v3): `clock` (hora local, `is_open`, `closes_at`, `next_open: { at, label }`), `menu` (carta con ids cortos y opciones; `mode: full` hasta 50 productos, `summary` con más), `bot.bot_name` (Sofi por defecto) y `bot.tone_label`, `active_order.status_label` y `eta`, `business.menu_url` y `active_order.track_url` armados con `FRONT_URL` | `rpc/agent_context` |
+| GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` (v3: por palabras, sin acentos, tolera plurales y errores de tipeo) | `rpc/agent_search_products` |
+| GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail`. `:id` es el UUID o el id corto de la carta | `rpc/agent_product_detail` |
+| GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` (v3: por palabras) | `rpc/agent_search_faq` |
 | GET | `/agent/orders/status` | `?businessId=&conversationId=&orderCode=` | `agent_order_status` | `rpc/agent_order_status` |
 | GET | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_get` | `rpc/agent_draft_get` |
-| POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` | `agent_draft_add_item` | `rpc/agent_draft_add_item` |
+| POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` | `agent_draft_add_item`. `productId` y `optionValueIds` aceptan UUID o id corto | `rpc/agent_draft_add_item` |
 | DELETE | `/agent/draft/items/:itemId` | `?businessId=&conversationId=` | `agent_draft_remove_item` | `rpc/agent_draft_remove_item` |
 | PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` | `rpc/agent_draft_set_details` |
 | DELETE | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_cancel` | — |
@@ -463,6 +463,8 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | POST | `/agent/orders/items` | `{ businessId, conversationId, orderCode? }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
 | POST | `/agent/conversations/:id/handoff` | `{ businessId, reason }` | `agent_conversation_handoff` | `rpc/agent_conversation_handoff` |
 | POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode?, providerMessageId? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+
+**Ids cortos (v3).** La carta del contexto identifica cada producto y valor de opción con los primeros 6 caracteres de su UUID (8 si 6 chocan con otro id del negocio; el UUID completo si también chocan con 8). Las rutas que reciben un producto u opción aceptan el corto o el UUID y lo resuelven **dentro del negocio**: un id de otro negocio no se encuentra, y uno ambiguo vuelve como `{ ok: false, error }` legible.
 
 `orderCode` va en el **cuerpo** y es opcional en las dos rutas de pedido confirmado: sin código, la función SQL resuelve el último pedido editable del contacto, que es el caso más común ("cambiame la dirección"). Con el código en la URL no había forma de expresarlo.
 

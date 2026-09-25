@@ -16,6 +16,7 @@ import {
   orderDetailsSchema,
   orderStatusQuery,
   paymentProofSchema,
+  productRefParam,
   searchQuery,
   upsertConversationSchema
 } from "./schemas.js";
@@ -69,7 +70,7 @@ agentRoutes.get("/products/search", async (req, res) => {
 });
 
 agentRoutes.get("/products/:id", async (req, res) => {
-  const { id } = idParam.parse(req.params);
+  const { id } = productRefParam.parse(req.params);
   const { businessId } = businessQuery.parse(req.query);
   res.json(await svc.productDetail(businessId, id));
 });

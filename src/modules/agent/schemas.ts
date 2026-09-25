@@ -14,6 +14,19 @@ export const idParam = z.object({ id: uuid() });
 
 export const itemIdParam = z.object({ itemId: uuid() });
 
+/**
+ * Producto o valor de opción: el UUID completo o el id corto de la carta del
+ * contexto (6 u 8 caracteres). El service lo resuelve dentro del negocio.
+ */
+const catalogRef = (message: string) =>
+  z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[0-9a-f][0-9a-f-]{3,35}$/, message);
+
+export const productRefParam = z.object({ id: catalogRef("El producto no existe.") });
+
 export const upsertConversationSchema = z.object({
   businessId,
   contactId: z.string().trim().min(1, "Falta el contacto.").max(160),
@@ -58,9 +71,9 @@ export const orderStatusQuery = z.object({
 export const draftAddItemSchema = z.object({
   businessId,
   conversationId,
-  productId: uuid("El producto no existe."),
+  productId: catalogRef("El producto no existe."),
   quantity: z.coerce.number().int().min(1).max(50).default(1),
-  optionValueIds: z.array(uuid()).max(30).default([]),
+  optionValueIds: z.array(catalogRef("Alguna de las opciones elegidas no existe.")).max(30).default([]),
   notes: z.string().trim().max(300).nullable().optional()
 });
 

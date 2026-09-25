@@ -10,10 +10,23 @@ import { Prisma } from "@prisma/client";
 import { config } from "../../config.js";
 import { systemCtx, type Tx, withDb } from "../../lib/db.js";
 import { notFound } from "../../lib/errors.js";
+import { toNumber } from "../../lib/money.js";
 import { newPaymentProofKey, putObject } from "../../lib/r2.js";
 import { zernioDownload } from "../../lib/zernio.js";
 import { isOpen } from "../businesses/service.js";
 import { buildOrderPayload, persistOrder, type PricingItem } from "../orders/pricing.js";
+import {
+  buildClock,
+  buildMenu,
+  DEFAULT_BOT_NAME,
+  DRAFT_TTL_HOURS,
+  isFullUuid,
+  orderEta,
+  shortRefs,
+  statusLabel,
+  toneLabel
+} from "./context.js";
+import * as repo from "./repo.js";
 import type {
   DraftAddItemInput,
   DraftDetailsInput,
@@ -167,33 +180,153 @@ export async function listMessages(
 // ── Lecturas ────────────────────────────────────────────────────────────────
 
 /**
- * Contexto del turno, enriquecido con los links públicos.
+ * Contexto del turno (v3). Sobre lo que devuelve `agent_context` agrega:
  *
- * La URL del menú no vive en la base: se arma con `FRONT_URL` y el slug. Sin
- * esto el agente no tiene forma de pasar el menú digital y termina leyendo los
- * productos de a uno, que es lo que pasaba en producción.
+ * - `clock`: hora local del negocio, si está abierto, a qué hora cierra o
+ *   cuándo abre. El modelo no sabía qué día ni qué hora era.
+ * - `menu`: la carta compacta con ids cortos (hasta 50 productos completa; con
+ *   más, un resumen). Con la carta a la vista el agente responde "¿qué
+ *   tienen?" y carga un pedido sin buscar producto por producto.
+ * - `bot`: nombre (Sofi por defecto) y tono legible.
+ * - `active_order.status_label` y `eta`.
+ * - Los links del menú y del seguimiento. La URL del menú no vive en la base:
+ *   se arma con `FRONT_URL` y el slug.
+ *
+ * Antes de leer, descarta el borrador si pasaron 4 h sin cambios: si no, un
+ * pedido abandonado hace días reaparece como "el pedido que estás armando".
  */
 export async function context(businessId: string, conversationId: string, k: number) {
-  const result = await rpc(
-    Prisma.sql`select public.agent_context(${businessId}::uuid, ${conversationId}::uuid, ${k}) as result`
-  );
-  const base = config.FRONT_URL.replace(/\/+$/, "");
-  const business = result.business as Json | undefined;
-  const slug = typeof business?.slug === "string" ? business.slug : null;
-  if (business && slug) business.menu_url = `${base}/${slug}`;
+  return withDb(systemCtx, async (tx) => {
+    await repo.expireStaleDraft(tx, businessId, conversationId, DRAFT_TTL_HOURS);
 
-  const order = result.active_order as Json | null | undefined;
-  const code = typeof order?.order_code === "string" ? order.order_code : null;
-  if (order && slug && code) order.track_url = `${base}/${slug}/order/${code}`;
+    const rows = await tx.$queryRaw<{ result: Json }[]>(
+      Prisma.sql`select public.agent_context(${businessId}::uuid, ${conversationId}::uuid, ${k}) as result`
+    );
+    const result = rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+    const business = result.business as Json | undefined;
+    if (!business || result.error) return result;
 
-  return result;
+    const [clockRow, bot, products, ids] = await Promise.all([
+      repo.clock(tx, businessId),
+      repo.botSettings(tx, businessId),
+      repo.menuProducts(tx, businessId),
+      repo.catalogIds(tx, businessId)
+    ]);
+
+    const base = config.FRONT_URL.replace(/\/+$/, "");
+    const slug = typeof business.slug === "string" ? business.slug : null;
+    if (slug) business.menu_url = `${base}/${slug}`;
+
+    const timezone = clockRow?.timezone ?? "America/Argentina/Buenos_Aires";
+    if (clockRow) {
+      const windows = await repo.windows(tx, businessId, clockRow.now_local.slice(0, 10));
+      result.clock = buildClock({
+        timezone,
+        manualStatus: clockRow.manual_status,
+        isOpen: clockRow.is_open,
+        nowLocal: clockRow.now_local,
+        windows
+      });
+    }
+
+    result.menu = buildMenu(
+      products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        price: toNumber(p.price),
+        isFeatured: p.isFeatured,
+        category: p.category,
+        options: p.options.map((o) => ({
+          ...o,
+          values: o.values.map((v) => ({ id: v.id, name: v.name, priceDelta: toNumber(v.priceDelta) }))
+        }))
+      })),
+      shortRefs(ids)
+    );
+
+    const botJson = (result.bot as Json | undefined) ?? {};
+    result.bot = {
+      ...botJson,
+      bot_name: bot?.botName?.trim() || DEFAULT_BOT_NAME,
+      tone: bot?.tone ?? botJson.tone ?? "friendly",
+      tone_label: toneLabel(bot?.tone),
+      handoff_enabled: bot?.handoffEnabled ?? true
+    };
+
+    const order = result.active_order as Json | null | undefined;
+    if (order) {
+      const status = String(order.status ?? "");
+      order.status_label = statusLabel(status, order.order_type as string | null);
+      order.eta = orderEta({
+        status,
+        createdAt: order.created_at as string,
+        estimatedMinutes: business.estimated_delivery_minutes as number | null,
+        timezone
+      });
+      const code = typeof order.order_code === "string" ? order.order_code : null;
+      if (slug && code) order.track_url = `${base}/${slug}/order/${code}`;
+    }
+
+    return result;
+  });
+}
+
+// ── Ids cortos ──────────────────────────────────────────────────────────────
+
+type Resolved = { ok: true; id: string } | { ok: false; error: string };
+
+/**
+ * La carta del contexto lleva ids cortos (6 u 8 caracteres). Las tools aceptan
+ * el corto o el UUID completo; acá se traduce, siempre dentro del negocio.
+ */
+async function resolveRef(
+  find: (prefix: string) => Promise<string[]>,
+  ref: string,
+  notFoundMessage: string
+): Promise<Resolved> {
+  const value = ref.trim().toLowerCase();
+  if (isFullUuid(value)) return { ok: true, id: value };
+  const matches = await find(value);
+  if (matches.length === 1) return { ok: true, id: matches[0]! };
+  if (matches.length > 1) return { ok: false, error: `${notFoundMessage} El código ${ref} es ambiguo: usá el que figura en la carta.` };
+  return { ok: false, error: notFoundMessage };
+}
+
+const PRODUCT_NOT_FOUND = "No encontré ese producto en la carta.";
+const OPTION_NOT_FOUND = "Alguna de las opciones elegidas no existe o no está disponible.";
+
+export function resolveProductRef(tx: Tx, businessId: string, ref: string) {
+  return resolveRef((prefix) => repo.productIdsByPrefix(tx, businessId, prefix), ref, PRODUCT_NOT_FOUND);
+}
+
+export async function resolveOptionRefs(
+  tx: Tx,
+  businessId: string,
+  refs: string[]
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  const ids: string[] = [];
+  for (const ref of refs) {
+    const resolved = await resolveRef((prefix) => repo.optionValueIdsByPrefix(tx, businessId, prefix), ref, OPTION_NOT_FOUND);
+    if (!resolved.ok) return resolved;
+    ids.push(resolved.id);
+  }
+  return { ok: true, ids };
 }
 
 export const searchProducts = (businessId: string, q: string | undefined, limit: number) =>
   rpc(Prisma.sql`select public.agent_search_products(${businessId}::uuid, ${q ?? null}, ${limit}) as result`);
 
-export const productDetail = (businessId: string, productId: string) =>
-  rpc(Prisma.sql`select public.agent_product_detail(${businessId}::uuid, ${productId}::uuid) as result`);
+export async function productDetail(businessId: string, productRef: string) {
+  return withDb(systemCtx, async (tx) => {
+    const product = await resolveProductRef(tx, businessId, productRef);
+    if (!product.ok) return product;
+    const rows = await tx.$queryRaw<{ result: Json }[]>(
+      Prisma.sql`select public.agent_product_detail(${businessId}::uuid, ${product.id}::uuid) as result`
+    );
+    return rows[0]?.result ?? { ok: false, error: PRODUCT_NOT_FOUND };
+  });
+}
 
 export const searchFaq = (businessId: string, q: string | undefined, limit: number) =>
   rpc(Prisma.sql`select public.agent_search_faq(${businessId}::uuid, ${q ?? ""}, ${limit}) as result`);
@@ -208,10 +341,18 @@ export const orderStatus = (businessId: string, conversationId: string, orderCod
 export const draftGet = (businessId: string, conversationId: string) =>
   rpc(Prisma.sql`select public.agent_draft_get(${businessId}::uuid, ${conversationId}::uuid) as result`);
 
-export const draftAddItem = (i: DraftAddItemInput) =>
-  rpc(Prisma.sql`select public.agent_draft_add_item(
-    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${i.productId}::uuid,
-    ${i.quantity}, ${i.optionValueIds}::uuid[], ${i.notes ?? null}) as result`);
+export async function draftAddItem(i: DraftAddItemInput) {
+  return withDb(systemCtx, async (tx) => {
+    const product = await resolveProductRef(tx, i.businessId, i.productId);
+    if (!product.ok) return product;
+    const options = await resolveOptionRefs(tx, i.businessId, i.optionValueIds);
+    if (!options.ok) return options;
+    const rows = await tx.$queryRaw<{ result: Json }[]>(Prisma.sql`select public.agent_draft_add_item(
+      ${i.businessId}::uuid, ${i.conversationId}::uuid, ${product.id}::uuid,
+      ${i.quantity}, ${options.ids}::uuid[], ${i.notes ?? null}) as result`);
+    return rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+  });
+}
 
 export const draftRemoveItem = (businessId: string, conversationId: string, itemId: string) =>
   rpc(
