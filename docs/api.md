@@ -454,11 +454,12 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` (v3: por palabras) | `rpc/agent_search_faq` |
 | GET | `/agent/orders/status` | `?businessId=&conversationId=&orderCode=` | `agent_order_status` | `rpc/agent_order_status` |
 | GET | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_get` | `rpc/agent_draft_get` |
-| POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` | `agent_draft_add_item`. `productId` y `optionValueIds` aceptan UUID o id corto | `rpc/agent_draft_add_item` |
+| POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` o, en v3, `{ businessId, conversationId, items: [{ productId, quantity, optionValueIds?, notes? }] }` (hasta 20; también como texto JSON) | `agent_draft_add_item` por item. `productId` y `optionValueIds` aceptan UUID o id corto. Con `items` devuelve `{ ok, resultados: [{ producto, cantidad, ok, error? }], pedido }`: un item que falla no frena al resto | `rpc/agent_draft_add_item` |
+| PATCH | `/agent/draft/items/:itemId` | `{ businessId, conversationId, quantity }` (0 a 50) | v3: cambia la cantidad validando stock del producto y de las opciones; 0 saca el item. Devuelve `{ ok, pedido }` | — |
 | DELETE | `/agent/draft/items/:itemId` | `?businessId=&conversationId=` | `agent_draft_remove_item` | `rpc/agent_draft_remove_item` |
-| PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` | `rpc/agent_draft_set_details` |
+| PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` (v3: pasar a `takeaway` borra la dirección) | `rpc/agent_draft_set_details` |
 | DELETE | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_cancel` | — |
-| POST | `/agent/draft/confirm` | `{ businessId, conversationId }` | `agent.confirmDraft` | `functions/v1/create-order` (modo whatsapp) |
+| POST | `/agent/draft/confirm` | `{ businessId, conversationId }` | `agent.confirmDraft`. v3: con el local cerrado por horario **toma el pedido** (queda `pending` con una nota en el historial) si abre en los próximos 7 días; cerrado a mano o sin horarios, `{ ok: false, error }`. La respuesta suma `para_la_apertura`, `abre`, `eta` (desde la apertura si está cerrado), `track_url` y `transferencia` si paga por transferencia | `functions/v1/create-order` (modo whatsapp) |
 | PATCH | `/agent/orders` | `{ businessId, conversationId, orderCode?, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
 | POST | `/agent/orders/items` | `{ businessId, conversationId, orderCode? }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
 | POST | `/agent/conversations/:id/handoff` | `{ businessId, reason }` | `agent_conversation_handoff` | `rpc/agent_conversation_handoff` |

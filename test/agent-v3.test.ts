@@ -197,6 +197,25 @@ describe.runIf(DB_AVAILABLE)("agente v3 (integración)", () => {
         .expect(200)
     ).body;
 
+  /** Cerrado por horario toda la semana, salvo mañana de 10 a 12 (día especial). */
+  async function closedUntilTomorrowAt10({ opensTomorrow = true } = {}) {
+    const db = ownerDb();
+    await db.business.update({ where: { id: s.businessId }, data: { manualStatus: "auto" } });
+    await db.businessHour.updateMany({ where: { businessId: s.businessId }, data: { isOpen: false } });
+    if (!opensTomorrow) return;
+    const [row] = await db.$queryRaw<{ tomorrow: Date }[]>`
+      select ((now() at time zone 'America/Argentina/Buenos_Aires')::date + 1) as tomorrow`;
+    await db.businessSpecialHour.create({
+      data: {
+        businessId: s.businessId,
+        date: row!.tomorrow,
+        isClosed: false,
+        opensAt: new Date("1970-01-01T10:00:00Z"),
+        closesAt: new Date("1970-01-01T12:00:00Z")
+      }
+    });
+  }
+
   const refOf = (body: { menu: { categories: { products: { name: string; ref: string }[] }[] } }, name: string) =>
     body.menu.categories.flatMap((c) => c.products).find((p) => p.name === name)!.ref;
 
@@ -231,21 +250,7 @@ describe.runIf(DB_AVAILABLE)("agente v3 (integración)", () => {
     });
 
     it("cerrado por horario: dice cuándo abre", async () => {
-      const db = ownerDb();
-      await db.business.update({ where: { id: s.businessId }, data: { manualStatus: "auto" } });
-      await db.businessHour.updateMany({ where: { businessId: s.businessId }, data: { isOpen: false } });
-      const [row] = await db.$queryRaw<{ tomorrow: Date }[]>`
-        select ((now() at time zone 'America/Argentina/Buenos_Aires')::date + 1) as tomorrow`;
-      const tomorrow = row!.tomorrow;
-      await db.businessSpecialHour.create({
-        data: {
-          businessId: s.businessId,
-          date: tomorrow,
-          isClosed: false,
-          opensAt: new Date("1970-01-01T10:00:00Z"),
-          closesAt: new Date("1970-01-01T12:00:00Z")
-        }
-      });
+      await closedUntilTomorrowAt10();
       const body = await context();
       expect(body.clock.is_open).toBe(false);
       expect(body.clock.next_open.label).toBe("mañana a las 10:00");
@@ -433,6 +438,161 @@ describe.runIf(DB_AVAILABLE)("agente v3 (integración)", () => {
       // El segundo alta toca el borrador (trigger de 0008) antes de que se lea el contexto.
       await addSoda();
       expect((await context()).draft.items).toHaveLength(2);
+    });
+  });
+
+  describe("V2: borrador", () => {
+    const ids = () => ({ businessId: s.businessId, conversationId });
+    const addItems = (items: unknown) =>
+      request(app).post("/v1/agent/draft/items").set(key).send({ ...ids(), items }).expect(200);
+    const setQuantity = (itemId: string, quantity: number) =>
+      request(app).patch(`/v1/agent/draft/items/${itemId}`).set(key).send({ ...ids(), quantity }).expect(200);
+
+    it("carga varios productos en una llamada", async () => {
+      const res = await addItems([
+        { productId: s.burgerId.slice(0, 6), quantity: 1, optionValueIds: [s.aPuntoId.slice(0, 6)] },
+        { productId: s.sodaId, quantity: 2 }
+      ]);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.resultados.map((r: { ok: boolean }) => r.ok)).toEqual([true, true]);
+      expect(res.body.pedido.items).toHaveLength(2);
+      expect(res.body.pedido.subtotal).toBe(15000);
+    });
+
+    it("un producto que falla no frena al resto y se explica", async () => {
+      const res = await addItems([
+        { productId: s.sodaId, quantity: 1 },
+        { productId: s.burgerId, quantity: 1 } // falta el punto, que es obligatorio
+      ]);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.resultados[0].ok).toBe(true);
+      expect(res.body.resultados[1]).toMatchObject({ ok: false });
+      expect(res.body.resultados[1].error).toMatch(/Punto/);
+      expect(res.body.pedido.items).toHaveLength(1);
+    });
+
+    it("acepta la lista como texto JSON (así la puede mandar n8n)", async () => {
+      const res = await addItems(JSON.stringify([{ productId: s.sodaId, quantity: 3 }]));
+      expect(res.body.pedido.items[0].quantity).toBe(3);
+    });
+
+    it("no carga en la conversación de otro negocio", async () => {
+      const otro = await ownerDb().business.findFirstOrThrow({ where: { id: s.businessId } });
+      const ajena = await ownerDb().whatsappConversation.create({ data: { businessId: otro.id, contactId: "wa-ajena" } });
+      const res = await request(app)
+        .post("/v1/agent/draft/items")
+        .set(key)
+        .send({ businessId: "00000000-0000-4000-8000-000000000000", conversationId: ajena.id, items: [{ productId: s.sodaId }] })
+        .expect(200);
+      expect(res.body).toEqual({ ok: false, error: "Conversacion invalida." });
+    });
+
+    it("cambia la cantidad de un item y con 0 lo saca", async () => {
+      const added = await addItems([{ productId: s.sodaId, quantity: 1 }]);
+      const itemId = added.body.pedido.items[0].id;
+
+      const tres = await setQuantity(itemId, 3);
+      expect(tres.body.ok).toBe(true);
+      expect(tres.body.pedido.items[0]).toMatchObject({ quantity: 3, total_price: 7500 });
+
+      const cero = await setQuantity(itemId, 0);
+      expect(cero.body.ok).toBe(true);
+      expect(cero.body.pedido.items).toHaveLength(0);
+    });
+
+    it("no pasa el stock del producto ni de la opción", async () => {
+      const added = await addItems([
+        { productId: s.burgerId, quantity: 1, optionValueIds: [s.aPuntoId, s.pancetaId] }
+      ]);
+      const itemId = added.body.pedido.items[0].id;
+      expect((await setQuantity(itemId, 11)).body.error).toBe("Solo quedan 10 unidades de Doble cheddar.");
+      expect((await setQuantity(itemId, 5)).body.error).toBe("Solo quedan 4 de Panceta.");
+    });
+
+    it("un item de otra conversación no se toca", async () => {
+      const added = await addItems([{ productId: s.sodaId, quantity: 1 }]);
+      const otra = await ownerDb().whatsappConversation.create({ data: { businessId: s.businessId, contactId: "wa-otra" } });
+      const res = await request(app)
+        .patch(`/v1/agent/draft/items/${added.body.pedido.items[0].id}`)
+        .set(key)
+        .send({ businessId: s.businessId, conversationId: otra.id, quantity: 5 })
+        .expect(200);
+      expect(res.body).toEqual({ ok: false, error: "Ese item ya no esta en el pedido." });
+    });
+
+    it("pasar a retiro borra la dirección", async () => {
+      await addItems([{ productId: s.sodaId, quantity: 1 }]);
+      await request(app)
+        .patch("/v1/agent/draft")
+        .set(key)
+        .send({ ...ids(), orderType: "delivery", deliveryAddress: "Laprida 450" })
+        .expect(200);
+      const res = await request(app).patch("/v1/agent/draft").set(key).send({ ...ids(), orderType: "takeaway" }).expect(200);
+      expect(res.body.pedido.order_type).toBe("takeaway");
+      expect(res.body.pedido.delivery_address).toBeNull();
+    });
+  });
+
+  describe("V2: confirmar", () => {
+    const ids = () => ({ businessId: s.businessId, conversationId });
+
+    async function armar(paymentMethod: "cash" | "transfer" = "cash") {
+      await request(app)
+        .post("/v1/agent/draft/items")
+        .set(key)
+        .send({ ...ids(), items: [{ productId: s.sodaId, quantity: 1 }] })
+        .expect(200);
+      await request(app)
+        .patch("/v1/agent/draft")
+        .set(key)
+        .send({ ...ids(), customerName: "Ana", orderType: "takeaway", paymentMethod })
+        .expect(200);
+    }
+
+    const confirm = () => request(app).post("/v1/agent/draft/confirm").set(key).send(ids());
+
+    it("con el local abierto devuelve código, hora estimada y seguimiento", async () => {
+      await armar();
+      const res = await confirm().expect(201);
+      expect(res.body).toMatchObject({ ok: true, para_la_apertura: false, abre: null });
+      expect(res.body.eta).toMatch(/^\d{2}:\d{2}$/);
+      expect(res.body.track_url).toContain(`/${s.slug}/order/${res.body.orderCode}`);
+      expect(res.body).not.toHaveProperty("transferencia");
+    });
+
+    it("si paga por transferencia devuelve los datos para transferir", async () => {
+      await ownerDb().paymentSettings.update({
+        where: { businessId: s.businessId },
+        data: { transferAlias: "la.esquina.mp", transferHolder: "Juan Pérez" }
+      });
+      await armar("transfer");
+      const res = await confirm().expect(201);
+      expect(res.body.transferencia).toMatchObject({ alias: "la.esquina.mp", titular: "Juan Pérez" });
+    });
+
+    it("con el local cerrado toma el pedido y lo deja para la apertura", async () => {
+      await closedUntilTomorrowAt10();
+      await armar();
+      const res = await confirm().expect(201);
+      // 10:00 + 45 min de demora (valor por defecto del negocio).
+      expect(res.body).toMatchObject({ ok: true, para_la_apertura: true, abre: "mañana a las 10:00", eta: "10:45" });
+
+      const order = await ownerDb().order.findUniqueOrThrow({ where: { id: res.body.id } });
+      expect(order.status).toBe("pending");
+      const history = await ownerDb().orderStatusHistory.findMany({ where: { orderId: order.id } });
+      expect(history).toHaveLength(1);
+      expect(history[0]!.note).toMatch(/local cerrado/);
+
+      // El contexto cuenta la misma hora estimada, no una calculada desde ahora.
+      expect((await context()).active_order.eta).toBe("10:45");
+    });
+
+    it("cerrado sin horarios en los próximos días no toma el pedido", async () => {
+      await closedUntilTomorrowAt10({ opensTomorrow: false });
+      await armar();
+      const res = await confirm().expect(200);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.error).toMatch(/no tiene horarios/);
     });
   });
 });

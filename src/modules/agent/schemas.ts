@@ -68,13 +68,39 @@ export const orderStatusQuery = z.object({
   orderCode: z.string().trim().max(20).optional()
 });
 
-export const draftAddItemSchema = z.object({
-  businessId,
-  conversationId,
+const draftItem = z.object({
   productId: catalogRef("El producto no existe."),
   quantity: z.coerce.number().int().min(1).max(50).default(1),
   optionValueIds: z.array(catalogRef("Alguna de las opciones elegidas no existe.")).max(30).default([]),
   notes: z.string().trim().max(300).nullable().optional()
+});
+
+export const draftAddItemSchema = draftItem.extend({ businessId, conversationId });
+
+/**
+ * Varios items en una llamada (v3). n8n a veces manda el array del modelo como
+ * texto JSON: se acepta las dos formas.
+ */
+export const draftAddItemsSchema = z.object({
+  businessId,
+  conversationId,
+  items: z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    },
+    z.array(draftItem).min(1, "No hay productos para agregar.").max(20)
+  )
+});
+
+export const draftItemQuantitySchema = z.object({
+  businessId,
+  conversationId,
+  quantity: z.coerce.number().int().min(0).max(50)
 });
 
 export const draftDetailsSchema = z.object({
@@ -126,6 +152,7 @@ export const paymentProofSchema = z.object({
 export type UpsertConversationInput = z.infer<typeof upsertConversationSchema>;
 export type LogMessageInput = z.infer<typeof logMessageSchema>;
 export type DraftAddItemInput = z.infer<typeof draftAddItemSchema>;
+export type DraftAddItemsInput = z.infer<typeof draftAddItemsSchema>;
 export type DraftDetailsInput = z.infer<typeof draftDetailsSchema>;
 export type OrderDetailsInput = z.infer<typeof orderDetailsSchema>;
 export type PaymentProofInput = z.infer<typeof paymentProofSchema>;

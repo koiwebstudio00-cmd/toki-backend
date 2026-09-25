@@ -299,6 +299,11 @@ export function orderEta(input: {
   }).format(eta);
 }
 
+/** "YYYY-MM-DDTHH:MM" local + minutos → "HH:MM". Para pedidos que se preparan al abrir. */
+export function etaFromLocal(at: string, minutes: number): string {
+  return new Date(Date.parse(`${at}:00Z`) + minutes * MINUTE).toISOString().slice(11, 16);
+}
+
 // ── Tono ────────────────────────────────────────────────────────────────────
 
 /** `bot_settings.tone` es texto libre; los valores de fábrica se traducen. */

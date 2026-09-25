@@ -377,12 +377,14 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       expect(sinDireccion.body.error).toMatch(/dirección/i);
     });
 
-    it("no confirma con el local cerrado", async () => {
+    it("no confirma si el local lo cerraron a mano desde el panel", async () => {
+      // Cerrado por horario sí toma el pedido (agente v3, test/agent-v3.test.ts);
+      // cerrado a mano no, porque no hay fecha de apertura.
       await armarBorradorCompleto();
       await ownerDb().business.update({ where: { id: s.businessId }, data: { manualStatus: "closed" } });
       const res = await request(app).post("/v1/agent/draft/confirm").set(key).send(draft()).expect(200);
       expect(res.body).toMatchObject({ ok: false });
-      expect(res.body.error).toMatch(/cerrado/i);
+      expect(res.body.error).toMatch(/no está tomando pedidos/i);
     });
 
     it("no confirma sin stock y lo explica", async () => {

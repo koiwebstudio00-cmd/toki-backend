@@ -139,3 +139,67 @@ export function expireStaleDraft(tx: Tx, businessId: string, conversationId: str
       and status = 'open'
       and updated_at < now() - make_interval(hours => ${hours}::int)`;
 }
+
+/** ¿La conversación es de este negocio? Las RPC lo validan; las rutas nuevas en TS, acá. */
+export async function conversationBelongs(tx: Tx, businessId: string, conversationId: string): Promise<boolean> {
+  return (await tx.whatsappConversation.count({ where: { id: conversationId, businessId } })) > 0;
+}
+
+/** Item de un borrador abierto de la conversación, con lo necesario para validar stock. */
+export function openDraftItem(tx: Tx, businessId: string, conversationId: string, itemId: string) {
+  return tx.whatsappOrderDraftItem.findFirst({
+    where: { id: itemId, businessId, draft: { conversationId, businessId, status: "open" } },
+    select: {
+      id: true,
+      unitPrice: true,
+      optionValueIds: true,
+      product: { select: { name: true, trackStock: true, stockQuantity: true } }
+    }
+  });
+}
+
+/** Valores de opción que controlan stock y no alcanzan para `quantity`. */
+export function optionValuesShort(tx: Tx, businessId: string, ids: string[], quantity: number) {
+  if (!ids.length) return Promise.resolve([]);
+  return tx.productOptionValue.findMany({
+    where: { businessId, id: { in: ids }, trackStock: true, stockQuantity: { lt: quantity } },
+    select: { name: true, stockQuantity: true }
+  });
+}
+
+export function updateDraftItemQuantity(tx: Tx, itemId: string, quantity: number, unitPrice: number) {
+  return tx.whatsappOrderDraftItem.update({
+    where: { id: itemId },
+    data: { quantity, totalPrice: unitPrice * quantity }
+  });
+}
+
+export function deleteDraftItem(tx: Tx, itemId: string) {
+  return tx.whatsappOrderDraftItem.delete({ where: { id: itemId } });
+}
+
+/** El borrador de la conversación, como lo ve el agente (`agent_draft_json`). */
+export async function draftJson(tx: Tx, conversationId: string) {
+  const rows = await tx.$queryRaw<{ result: Record<string, unknown> | null }[]>`
+    select public.agent_draft_json(${conversationId}::uuid) as result`;
+  return rows[0]?.result ?? null;
+}
+
+/**
+ * Pedido que entró con el local cerrado: se deja dicho en la primera entrada
+ * del historial (la que crea `persist_order`, sin nota), así el local lo ve en
+ * el detalle del pedido.
+ */
+export function noteClosedOrder(tx: Tx, orderId: string, note: string) {
+  return tx.orderStatusHistory.updateMany({
+    where: { orderId, note: null, toStatus: "pending" },
+    data: { note }
+  });
+}
+
+export function transferSettings(tx: Tx, businessId: string) {
+  return tx.paymentSettings.findUnique({
+    where: { businessId },
+    select: { transferAlias: true, transferCbu: true, transferHolder: true, transferBank: true }
+  });
+}

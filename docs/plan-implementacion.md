@@ -112,6 +112,14 @@
 - **El borrador vence a las 4 h sin cambios**; un trigger nuevo cuenta agregar o sacar un item como cambio.
 - **Migración `0008`.** 272 tests en verde (36 nuevos en `test/agent-v3.test.ts`); los 2 de comprobantes fallan solo en el sandbox porque no hay red hacia R2.
 
+**Agente v3 — V2 terminada (2026-09-25).**
+
+- **Varios productos en una llamada** (`POST /agent/draft/items` con `items`): un pedido directo se carga de una vez y cada producto que falla se explica sin frenar al resto.
+- **Cambiar cantidades** (`PATCH /agent/draft/items/:itemId`), con control de stock de productos y opciones; 0 saca el item.
+- **Pasar a retiro borra la dirección** (migración `0009`).
+- **Pedidos con el local cerrado:** se confirman y quedan para la apertura, con la hora estimada calculada desde ahí. Cerrado a mano desde el panel sigue sin tomar pedidos.
+- **Confirmar devuelve** hora estimada, link de seguimiento y datos de transferencia. 284 tests en verde (12 nuevos).
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias

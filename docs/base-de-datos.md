@@ -16,6 +16,7 @@
 | `prisma/migrations/0006_payment_proof_idempotencia/migration.sql` | `order_payment_proofs.provider_message_id` + índice único parcial: el webhook se reintenta (F4) |
 | `prisma/migrations/0007_agent_stock_track_stock/migration.sql` | Las funciones `agent_*` también respetan `track_stock` (F4, hallazgo H5) |
 | `prisma/migrations/0008_agente_v3_contexto/migration.sql` | Agente v3, fase V1: búsqueda por palabras sin acentos (`agent_search_terms`, `agent_search_text`, `agent_search_products`, `agent_search_faq`), trigger que actualiza `whatsapp_order_drafts.updated_at` al cambiar un item (vencimiento del borrador a las 4 h) y `bot_settings.bot_name` por defecto `Sofi` |
+| `prisma/migrations/0009_agente_v3_borrador/migration.sql` | Agente v3, fase V2: `agent_draft_set_details` borra la dirección al pasar a retiro |
 | `prisma/schema.prisma` | Modelos Prisma (31) generados desde la réplica, validados con el engine de Prisma 6.19 |
 | `scripts/bootstrap-prod.sql` | Creación del rol de la API en producción |
 

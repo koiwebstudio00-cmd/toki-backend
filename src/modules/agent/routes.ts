@@ -7,6 +7,8 @@ import {
   contextQuery,
   conversationQuery,
   draftAddItemSchema,
+  draftAddItemsSchema,
+  draftItemQuantitySchema,
   draftDetailsSchema,
   handoffSchema,
   idParam,
@@ -87,8 +89,20 @@ agentRoutes.get("/draft", async (req, res) => {
   res.json(await svc.draftGet(businessId, conversationId));
 });
 
+// Un item (`productId`) o varios (`items`, v3).
 agentRoutes.post("/draft/items", async (req, res) => {
+  if (req.body && typeof req.body === "object" && "items" in req.body) {
+    res.json(await svc.draftAddItems(draftAddItemsSchema.parse(req.body)));
+    return;
+  }
   res.json(await svc.draftAddItem(draftAddItemSchema.parse(req.body)));
+});
+
+// Cambiar la cantidad de un item del borrador; 0 lo saca (v3).
+agentRoutes.patch("/draft/items/:itemId", async (req, res) => {
+  const { itemId } = itemIdParam.parse(req.params);
+  const { businessId, conversationId, quantity } = draftItemQuantitySchema.parse(req.body);
+  res.json(await svc.draftSetItemQuantity(businessId, conversationId, itemId, quantity));
 });
 
 agentRoutes.delete("/draft/items/:itemId", async (req, res) => {

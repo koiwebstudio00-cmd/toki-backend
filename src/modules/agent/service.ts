@@ -18,8 +18,10 @@ import { buildOrderPayload, persistOrder, type PricingItem } from "../orders/pri
 import {
   buildClock,
   buildMenu,
+  type Clock,
   DEFAULT_BOT_NAME,
   DRAFT_TTL_HOURS,
+  etaFromLocal,
   isFullUuid,
   orderEta,
   shortRefs,
@@ -29,6 +31,7 @@ import {
 import * as repo from "./repo.js";
 import type {
   DraftAddItemInput,
+  DraftAddItemsInput,
   DraftDetailsInput,
   LogMessageInput,
   OrderDetailsInput,
@@ -179,6 +182,20 @@ export async function listMessages(
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
 
+/** Reloj del negocio (hora local, abierto, hasta cuándo o cuándo abre). */
+async function loadClock(tx: Tx, businessId: string): Promise<Clock | null> {
+  const row = await repo.clock(tx, businessId);
+  if (!row) return null;
+  const windows = await repo.windows(tx, businessId, row.now_local.slice(0, 10));
+  return buildClock({
+    timezone: row.timezone,
+    manualStatus: row.manual_status,
+    isOpen: row.is_open,
+    nowLocal: row.now_local,
+    windows
+  });
+}
+
 /**
  * Contexto del turno (v3). Sobre lo que devuelve `agent_context` agrega:
  *
@@ -206,8 +223,8 @@ export async function context(businessId: string, conversationId: string, k: num
     const business = result.business as Json | undefined;
     if (!business || result.error) return result;
 
-    const [clockRow, bot, products, ids] = await Promise.all([
-      repo.clock(tx, businessId),
+    const [clock, bot, products, ids] = await Promise.all([
+      loadClock(tx, businessId),
       repo.botSettings(tx, businessId),
       repo.menuProducts(tx, businessId),
       repo.catalogIds(tx, businessId)
@@ -217,17 +234,8 @@ export async function context(businessId: string, conversationId: string, k: num
     const slug = typeof business.slug === "string" ? business.slug : null;
     if (slug) business.menu_url = `${base}/${slug}`;
 
-    const timezone = clockRow?.timezone ?? "America/Argentina/Buenos_Aires";
-    if (clockRow) {
-      const windows = await repo.windows(tx, businessId, clockRow.now_local.slice(0, 10));
-      result.clock = buildClock({
-        timezone,
-        manualStatus: clockRow.manual_status,
-        isOpen: clockRow.is_open,
-        nowLocal: clockRow.now_local,
-        windows
-      });
-    }
+    const timezone = clock?.timezone ?? "America/Argentina/Buenos_Aires";
+    if (clock) result.clock = clock;
 
     result.menu = buildMenu(
       products.map((p) => ({
@@ -258,12 +266,12 @@ export async function context(businessId: string, conversationId: string, k: num
     if (order) {
       const status = String(order.status ?? "");
       order.status_label = statusLabel(status, order.order_type as string | null);
-      order.eta = orderEta({
-        status,
-        createdAt: order.created_at as string,
-        estimatedMinutes: business.estimated_delivery_minutes as number | null,
-        timezone
-      });
+      const minutes = business.estimated_delivery_minutes as number | null;
+      // Un pedido que espera a que abra el local sale a partir de la apertura.
+      order.eta =
+        status === "pending" && clock && !clock.is_open && clock.next_open && minutes
+          ? etaFromLocal(clock.next_open.at, minutes)
+          : orderEta({ status, createdAt: order.created_at as string, estimatedMinutes: minutes, timezone });
       const code = typeof order.order_code === "string" ? order.order_code : null;
       if (slug && code) order.track_url = `${base}/${slug}/order/${code}`;
     }
@@ -354,6 +362,71 @@ export async function draftAddItem(i: DraftAddItemInput) {
   });
 }
 
+/**
+ * Varios productos en una llamada (v3): un pedido directo ("2 muzzas y una
+ * coca") se carga de una vez. Cada item se valida por separado: uno que falla
+ * no frena al resto, y el agente le cuenta al cliente cuál no se pudo cargar.
+ */
+export async function draftAddItems(input: DraftAddItemsInput) {
+  return withDb(systemCtx, async (tx) => {
+    if (!(await repo.conversationBelongs(tx, input.businessId, input.conversationId))) {
+      return { ok: false as const, error: "Conversacion invalida." };
+    }
+    const resultados: { producto: string; cantidad: number; ok: boolean; error?: string }[] = [];
+    for (const item of input.items) {
+      const base = { producto: item.productId, cantidad: item.quantity };
+      const product = await resolveProductRef(tx, input.businessId, item.productId);
+      if (!product.ok) {
+        resultados.push({ ...base, ok: false, error: product.error });
+        continue;
+      }
+      const options = await resolveOptionRefs(tx, input.businessId, item.optionValueIds);
+      if (!options.ok) {
+        resultados.push({ ...base, ok: false, error: options.error });
+        continue;
+      }
+      const rows = await tx.$queryRaw<{ result: Json }[]>(Prisma.sql`select public.agent_draft_add_item(
+        ${input.businessId}::uuid, ${input.conversationId}::uuid, ${product.id}::uuid,
+        ${item.quantity}, ${options.ids}::uuid[], ${item.notes ?? null}) as result`);
+      const result = rows[0]?.result ?? {};
+      resultados.push(
+        result.ok === true ? { ...base, ok: true } : { ...base, ok: false, error: String(result.error ?? "No se pudo agregar.") }
+      );
+    }
+    return {
+      ok: resultados.every((r) => r.ok),
+      resultados,
+      pedido: await repo.draftJson(tx, input.conversationId)
+    };
+  });
+}
+
+/**
+ * Cambia la cantidad de un item del borrador; con 0 lo saca. El precio
+ * unitario queda el del alta (al confirmar se recalcula todo contra la base).
+ */
+export async function draftSetItemQuantity(businessId: string, conversationId: string, itemId: string, quantity: number) {
+  return withDb(systemCtx, async (tx) => {
+    const item = await repo.openDraftItem(tx, businessId, conversationId, itemId);
+    if (!item) return { ok: false as const, error: "Ese item ya no esta en el pedido." };
+
+    if (quantity === 0) {
+      await repo.deleteDraftItem(tx, item.id);
+    } else {
+      const { product } = item;
+      if (product.trackStock && product.stockQuantity < quantity) {
+        return { ok: false as const, error: `Solo quedan ${product.stockQuantity} unidades de ${product.name}.` };
+      }
+      const short = await repo.optionValuesShort(tx, businessId, item.optionValueIds, quantity);
+      if (short.length) {
+        return { ok: false as const, error: `Solo quedan ${short[0]!.stockQuantity} de ${short[0]!.name}.` };
+      }
+      await repo.updateDraftItemQuantity(tx, item.id, quantity, toNumber(item.unitPrice));
+    }
+    return { ok: true as const, pedido: await repo.draftJson(tx, conversationId) };
+  });
+}
+
 export const draftRemoveItem = (businessId: string, conversationId: string, itemId: string) =>
   rpc(
     Prisma.sql`select public.agent_draft_remove_item(${businessId}::uuid, ${conversationId}::uuid, ${itemId}::uuid) as result`
@@ -425,8 +498,18 @@ export async function confirmDraft(businessId: string, conversationId: string) {
     });
     const business = await tx.business.findFirst({ where: { id: businessId, isActive: true } });
     if (!business) return fail("El negocio no está disponible.");
-    if (!(await isOpen(tx, businessId))) {
-      return fail("El local está cerrado en este momento, no puedo confirmar el pedido.");
+
+    // Con el local cerrado el pedido se toma igual y se prepara al abrir (D2).
+    // No se toma si lo cerraron a mano o si no abre en los próximos 7 días:
+    // quedaría esperando sin fecha.
+    const open = await isOpen(tx, businessId);
+    const clock = open ? null : await loadClock(tx, businessId);
+    if (!open && !clock?.next_open) {
+      return fail(
+        clock?.manual_status === "closed"
+          ? "El local no está tomando pedidos por ahora."
+          : "El local está cerrado y no tiene horarios cargados para los próximos días, así que no puedo tomar el pedido."
+      );
     }
 
     const items: PricingItem[] = draft.items.map((item) => ({
@@ -456,7 +539,37 @@ export async function confirmDraft(businessId: string, conversationId: string) {
         where: { id: draft.id },
         data: { status: "confirmed", orderId: order.id }
       });
-      return { ok: true as const, ...order };
+
+      const nextOpen = clock?.next_open ?? null;
+      if (nextOpen) {
+        await repo.noteClosedOrder(tx, order.id, `Recibido con el local cerrado: se prepara al abrir (${nextOpen.label}).`);
+      }
+      const minutes = business.estimatedDeliveryMinutes;
+      const eta = nextOpen
+        ? etaFromLocal(nextOpen.at, minutes)
+        : orderEta({ status: "pending", createdAt: new Date(), estimatedMinutes: minutes, timezone: business.timezone });
+      const base = config.FRONT_URL.replace(/\/+$/, "");
+      const transfer = d.paymentMethod === "transfer" ? await repo.transferSettings(tx, businessId) : null;
+
+      return {
+        ok: true as const,
+        ...order,
+        // Lo que el agente le cuenta al cliente al confirmar.
+        para_la_apertura: Boolean(nextOpen),
+        abre: nextOpen?.label ?? null,
+        eta,
+        track_url: `${base}/${business.slug}/order/${order.orderCode}`,
+        ...(transfer
+          ? {
+              transferencia: {
+                alias: transfer.transferAlias,
+                cbu_cvu: transfer.transferCbu,
+                titular: transfer.transferHolder,
+                banco: transfer.transferBank
+              }
+            }
+          : {})
+      };
     } catch (err) {
       // Mensaje legible para el cliente final, no un stack.
       return fail(err instanceof Error ? err.message : "No se pudo confirmar el pedido.");
