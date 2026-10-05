@@ -27,11 +27,16 @@ import {
 } from "./schemas.js";
 import * as orders from "./orders.js";
 import * as svc from "./service.js";
+import { receiveCatalog, receiveCatalogSchema } from "../catalog/service.js";
 
 /** /v1/agent — n8n, autenticado con X-Api-Key. */
 export const agentRoutes = Router();
 
 agentRoutes.use(requireApiKey);
+
+agentRoutes.post("/catalog-orders", async (req, res) => {
+  res.json(await receiveCatalog(receiveCatalogSchema.parse(req.body)));
+});
 
 agentRoutes.get("/integrations/by-account/:accountId", async (req, res) => {
   res.json(await svc.resolveIntegration(String(req.params.accountId)));

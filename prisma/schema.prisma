@@ -195,6 +195,7 @@ model Business {
   orderModifications        OrderModification[]
   conversationCases         ConversationCase[]
   orderRefunds              OrderRefund[]
+  catalogRequests           CatalogRequest[]
 
   @@index([slug], map: "idx_businesses_slug")
   @@map("businesses")
@@ -438,6 +439,7 @@ model Order {
   modifications          OrderModification[]
   cases                  ConversationCase[]
   refunds                OrderRefund[]
+  catalogRequests        CatalogRequest[]
 
   @@index([orderCode], map: "idx_orders_order_code")
   @@index([whatsappConversationId], map: "idx_orders_whatsapp_conversation_id")
@@ -597,10 +599,35 @@ model WhatsappConversation {
   orders              Order[]
   messages            WhatsappMessage[]
   whatsappOrderDrafts WhatsappOrderDraft?
+  catalogRequests     CatalogRequest[]
 
   @@unique([businessId, contactId])
   @@index([businessId, phone], map: "idx_whatsapp_conversations_business_phone")
   @@map("whatsapp_conversations")
+  @@schema("public")
+}
+
+model CatalogRequest {
+  id             String   @id @db.Uuid
+  businessId     String   @map("business_id") @db.Uuid
+  requestId      String   @map("request_id") @db.Uuid
+  inputHash      String   @map("input_hash")
+  input          Json
+  quoteHash      String   @map("quote_hash")
+  message        String
+  messageHash    String   @map("message_hash")
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversationId String?  @map("conversation_id") @db.Uuid
+  orderId        String?  @map("order_id") @db.Uuid
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation   WhatsappConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  order          Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([businessId, requestId], map: "catalog_requests_business_id_request_id_key")
+  @@index([conversationId], map: "catalog_requests_conversation_idx")
+  @@index([orderId], map: "catalog_requests_order_idx")
+  @@map("catalog_requests")
   @@schema("public")
 }
 
