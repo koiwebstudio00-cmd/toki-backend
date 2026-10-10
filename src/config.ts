@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { agentModelConnection } from "./lib/agent-model-config.js";
 
 // Variables de entorno validadas al arrancar. Ver docs/arquitectura.md §11.
 /** Extrae el id de cuenta de R2: acepta el id suelto o el endpoint completo. */
@@ -32,6 +33,15 @@ const envSchema = z.object({
   // SHA-256 (hex) de la API key que usa n8n en X-Api-Key. La key en claro nunca
   // vive en el servidor: generar con `openssl rand -hex 32` y hashear.
   AGENT_API_KEY_SHA256: z.string().default(""),
+  // Motor nativo: opcional hasta habilitar el chat de prueba en este servidor.
+  OPENAI_API_KEY: z.string().trim().default(""),
+  OPENAI_MODEL: z.string().trim().default(""),
+  OPENAI_TRANSCRIPTION_MODEL: z.string().trim().min(1).default("gpt-transcribe"),
+  AI_GATEWAY_API_KEY: z.string().trim().default(""),
+  AGENT_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(4),
+  AGENT_WORKER_ENABLED: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
+  ZERNIO_WEBHOOK_SECRET: z.string().default(""),
+  AI_GATEWAY_MODEL: z.string().trim().default(""),
 
   // Emails: Resend por SMTP (smtp.resend.com:465, user "resend", pass = API key).
   // Sin SMTP_HOST los emails se imprimen en consola (dev).
@@ -87,3 +97,7 @@ export const corsOrigins: string[] = config.CORS_ORIGIN.split(",")
 // Solo dev/test: secret fijo para no frenar el arranque local.
 export const jwtSecret =
   config.JWT_SECRET || "dev-secret-no-usar-en-produccion-0123456789abcdef";
+
+if (config.AGENT_WORKER_ENABLED && (!agentModelConnection(config) || !config.ZERNIO_API_KEY || !config.ZERNIO_WEBHOOK_SECRET)) {
+  throw new Error("AGENT_WORKER_ENABLED requiere OPENAI_API_KEY y OPENAI_MODEL (o AI_GATEWAY_API_KEY y AI_GATEWAY_MODEL), ZERNIO_API_KEY y ZERNIO_WEBHOOK_SECRET.");
+}

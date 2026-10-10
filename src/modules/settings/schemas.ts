@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CAPABILITY_IDS, type AgentCapability } from "../agent/configuration.js";
 import { nonNegativeInt, optionalText } from "../../lib/validation.js";
 
 export const paymentSettingsSchema = z
@@ -41,7 +42,13 @@ export const botSettingsSchema = z
     botName: z.string().trim().min(1, "Ingresá un nombre.").max(40).optional(),
     tone: z.string().trim().min(1).max(40).optional(),
     fallbackMessage: z.string().trim().min(1, "Ingresá el mensaje.").max(500).optional(),
-    handoffEnabled: z.boolean().optional()
+    handoffEnabled: z.boolean().optional(),
+    instructions: z.string().trim().max(8000, "Las instrucciones admiten hasta 8000 caracteres.").optional(),
+    businessContext: z.string().trim().max(12000, "La información del negocio admite hasta 12000 caracteres.").optional(),
+    enabledTools: z.array(z.custom<AgentCapability>((value) => typeof value === "string" && CAPABILITY_IDS.includes(value as AgentCapability), "Herramienta no válida."))
+      .max(CAPABILITY_IDS.length)
+      .refine((values) => new Set(values).size === values.length, "Hay herramientas repetidas.")
+      .optional()
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), "No hay cambios para guardar.");
 

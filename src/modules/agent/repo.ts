@@ -3,6 +3,7 @@
 //
 // Todo corre con service_role: cada query filtra por `business_id` a mano.
 import type { Tx } from "../../lib/db.js";
+import { botSettingsSelect } from "./configuration.js";
 
 // ── Reloj del negocio ───────────────────────────────────────────────────────
 
@@ -120,8 +121,12 @@ export async function optionValueIdsByPrefix(tx: Tx, businessId: string, prefix:
 export function botSettings(tx: Tx, businessId: string) {
   return tx.botSettings.findUnique({
     where: { businessId },
-    select: { botName: true, tone: true, handoffEnabled: true }
+    select: botSettingsSelect
   });
+}
+
+export function conversationBelongsToBusiness(tx: Tx, businessId: string, conversationId: string) {
+  return tx.whatsappConversation.findFirst({ where: { id: conversationId, businessId }, select: { id: true } });
 }
 
 // ── Borrador ────────────────────────────────────────────────────────────────
@@ -216,28 +221,27 @@ export function normalizeOrderCode(value: string | null | undefined): string | n
 
 /**
  * El pedido del que habla el cliente: el del código si lo dio (cualquier
- * estado, siempre del negocio), o el último en curso de la conversación o de
+ * estado, siempre del negocio Y del contacto), o el último en curso de la conversación o de
  * su teléfono (un pedido hecho en la web también cuenta).
  */
 export async function resolveOrderId(
   tx: Tx,
   businessId: string,
   conversationId: string,
-  orderCode?: string | null
+  orderCode?: string | null,
+  includeClosed = false
 ): Promise<string | null> {
   const code = normalizeOrderCode(orderCode);
-  if (code) {
-    const order = await tx.order.findFirst({ where: { businessId, orderCode: code }, select: { id: true } });
-    return order?.id ?? null;
-  }
+  if (orderCode?.trim() && !code) return null;
   const conversation = await tx.whatsappConversation.findFirst({
     where: { id: conversationId, businessId },
     select: { phone: true }
   });
+  if (!conversation) return null;
   const order = await tx.order.findFirst({
     where: {
       businessId,
-      status: { notIn: ["delivered", "cancelled"] },
+      ...(code ? { orderCode: code } : includeClosed ? {} : { status: { notIn: ["delivered", "cancelled"] } }),
       OR: [
         { whatsappConversationId: conversationId },
         ...(conversation?.phone ? [{ customerPhone: conversation.phone }] : [])
@@ -264,6 +268,9 @@ export function orderForChange(tx: Tx, orderId: string) {
     }
   });
 }
+
+export const orderCodeById = (tx: Tx, businessId: string, id: string) =>
+  tx.order.findFirst({ where: { businessId, id }, select: { orderCode: true } });
 
 export async function orderJson(tx: Tx, orderId: string) {
   const rows = await tx.$queryRaw<{ result: Record<string, unknown> | null }[]>`

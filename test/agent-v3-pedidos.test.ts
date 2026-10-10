@@ -395,13 +395,13 @@ describe.runIf(DB_AVAILABLE)("agente v3: pedidos hechos", () => {
           messageType: "image",
           content: "[imagen] comprobante",
           providerMessageId: "evt-img-1",
-          rawPayload: { event: "message.received", message: { attachments: [{ type: "image", url: "https://zernio.com/m/1.jpg" }] } }
+          rawPayload: { event: "message.received", message: { attachments: [{ type: "image", url: "https://zernio.com/api/v1/whatsapp/media/1" }] } }
         }
       });
       const fetch = mockDownload();
       const res = await request(app).post("/v1/agent/payment-proofs").set(key).send(ids()).expect(200);
       expect(res.body).toMatchObject({ ok: true, duplicate: false, orderCode: order.orderCode });
-      expect(String(fetch.mock.calls[0]![0])).toBe("https://zernio.com/m/1.jpg");
+      expect(String(fetch.mock.calls[0]![0])).toBe("https://zernio.com/api/v1/whatsapp/media/1");
       const proof = await db().orderPaymentProof.findFirstOrThrow({ where: { orderId: order.id } });
       expect(proof.providerMessageId).toBe("evt-img-1");
 

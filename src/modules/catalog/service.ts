@@ -1,3 +1,4 @@
+import { checkQuote, type QuoteOptions } from "../agent/quote.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { config } from "../../config.js";
@@ -61,7 +62,7 @@ export async function prepareCatalog(slug: string, data: z.infer<typeof prepareC
   });
 }
 
-export async function receiveCatalog(data: z.infer<typeof receiveCatalogSchema>) {
+export async function receiveCatalog(data: z.infer<typeof receiveCatalogSchema>, options: QuoteOptions = {}) {
   try {
     return await withDb(systemCtx, async tx => {
       const { businessId, conversationId, messageId } = data;
@@ -90,6 +91,11 @@ export async function receiveCatalog(data: z.infer<typeof receiveCatalogSchema>)
         const quote = await buildOrderPayload(tx, business, checkoutSchema.parse(saved.input));
         assertSelectedOptions(saved.input, quote);
         if (quoteHash(quote) !== saved.quote_hash) throw invalid("Cambiaron los precios o las condiciones del pedido. Volvé al carrito, revisá el total actualizado y enviá una nueva solicitud. No se creó ningún pedido.");
+        const { orderCode: _generatedCode, ...details } = quote;
+        void _generatedCode;
+        const approvalQuote = { action: "recibir_pedido_catalogo", reference, ...details };
+        checkQuote(approvalQuote, options);
+        if (options.quoteOnly) return { ok: true as const, quote: approvalQuote };
         order = await persistOrder(tx, { ...quote, source: "web", conversationId });
         await tx.$executeRaw`update public.catalog_requests set order_id = ${order.id}::uuid, conversation_id = ${conversationId}::uuid where id = ${reference}::uuid and business_id = ${businessId}::uuid`;
       }

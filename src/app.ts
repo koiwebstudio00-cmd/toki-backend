@@ -1,3 +1,4 @@
+import { agentWebhookRoutes } from "./modules/agent/webhook.js";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -37,6 +38,7 @@ export function buildApp() {
       maxAge: 600
     })
   );
+  app.use(agentWebhookRoutes);
   app.use(express.json({ limit: "1mb" }));
 
   const v1 = express.Router();

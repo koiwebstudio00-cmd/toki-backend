@@ -9,7 +9,7 @@
 import { Prisma } from "@prisma/client";
 import { config } from "../../config.js";
 import { systemCtx, type Tx, withDb } from "../../lib/db.js";
-import { notFound } from "../../lib/errors.js";
+import { ApiError, notFound } from "../../lib/errors.js";
 import { toNumber } from "../../lib/money.js";
 import { newPaymentProofKey, putObject } from "../../lib/r2.js";
 import { zernioDownload } from "../../lib/zernio.js";
@@ -28,8 +28,11 @@ import {
   shortRefs,
   toneLabel
 } from "./context.js";
+import { checkQuote, type QuoteOptions } from "./quote.js";
 import { decorateOrder } from "./orders.js";
 import * as repo from "./repo.js";
+import { BOT_DEFAULTS, allowedToolNames } from "./configuration.js";
+import { buildAgentPrompt } from "./prompt.js";
 import type {
   DraftAddItemInput,
   DraftAddItemsInput,
@@ -63,12 +66,13 @@ export async function resolveIntegration(accountId: string) {
     if (!integration?.business?.isActive) throw notFound("No hay ningún negocio conectado a esta cuenta.");
     const bot = await tx.botSettings.findUnique({
       where: { businessId: integration.businessId },
-      select: { isEnabled: true, botName: true, tone: true, fallbackMessage: true, handoffEnabled: true }
+      select: { engine: true, isEnabled: true, botName: true, tone: true, fallbackMessage: true, handoffEnabled: true }
     });
     return {
       businessId: integration.businessId,
       business: integration.business,
-      botEnabled: bot?.isEnabled ?? false,
+      botEnabled: (bot?.isEnabled ?? false) && bot?.engine !== "native",
+      engine: bot?.engine ?? "legacy",
       bot: bot ?? null
     };
   });
@@ -215,6 +219,9 @@ async function loadClock(tx: Tx, businessId: string): Promise<Clock | null> {
  */
 export async function context(businessId: string, conversationId: string, k: number) {
   return withDb(systemCtx, async (tx) => {
+    if (!(await repo.conversationBelongsToBusiness(tx, businessId, conversationId))) {
+      throw notFound("La conversación no existe.");
+    }
     await repo.expireStaleDraft(tx, businessId, conversationId, DRAFT_TTL_HOURS);
 
     const rows = await tx.$queryRaw<{ result: Json }[]>(
@@ -260,8 +267,15 @@ export async function context(businessId: string, conversationId: string, k: num
       bot_name: bot?.botName?.trim() || DEFAULT_BOT_NAME,
       tone: bot?.tone ?? botJson.tone ?? "friendly",
       tone_label: toneLabel(bot?.tone),
-      handoff_enabled: bot?.handoffEnabled ?? true
+      handoff_enabled: bot?.handoffEnabled ?? true,
+      instructions: bot?.instructions ?? "",
+      business_context: bot?.businessContext ?? "",
+      enabled_tools: bot?.enabledTools ?? BOT_DEFAULTS.enabledTools
     };
+    const agentSettings = bot ?? BOT_DEFAULTS;
+    result.allowed_tools = allowedToolNames(agentSettings);
+    result.agent_prompt = buildAgentPrompt(agentSettings, String(business.name ?? "el negocio"));
+    result.agent_config_updated_at = bot?.updatedAt.toISOString() ?? null;
 
     const order = decorateOrder(result.active_order as Json | null | undefined);
     if (order) {
@@ -276,6 +290,9 @@ export async function context(businessId: string, conversationId: string, k: num
       if (slug && code) order.track_url = `${base}/${slug}/order/${code}`;
     }
 
+    // Context must not provide a back door to a disabled order capability.
+    if (!agentSettings.enabledTools.includes("order_status")) result.active_order = null;
+    if (!agentSettings.enabledTools.includes("create_orders")) result.draft = null;
     return result;
   });
 }
@@ -342,16 +359,14 @@ export const searchFaq = (businessId: string, q: string | undefined, limit: numb
 /** Estado del pedido, con el estado en palabras, si se puede cambiar o cancelar y el link de seguimiento. */
 export async function orderStatus(businessId: string, conversationId: string, orderCode?: string) {
   return withDb(systemCtx, async (tx) => {
-    const rows = await tx.$queryRaw<{ result: Json }[]>(
-      Prisma.sql`select public.agent_order_status(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
-    );
-    const result = rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
-    const order = decorateOrder(result.pedido as Json | null);
+    const orderId = await repo.resolveOrderId(tx, businessId, conversationId, orderCode, true);
+    if (!orderId) return { ok: false, error: "No encontré ningún pedido con esos datos." };
+    const order = decorateOrder(await repo.orderJson(tx, orderId));
     if (order && typeof order.order_code === "string") {
       const business = await tx.business.findUnique({ where: { id: businessId }, select: { slug: true } });
       if (business) order.track_url = `${config.FRONT_URL.replace(/\/+$/, "")}/${business.slug}/order/${order.order_code}`;
     }
-    return result;
+    return { ok: true, pedido: order };
   });
 }
 
@@ -475,8 +490,9 @@ const fail = (error: string) => ({ ok: false as const, error });
  * un precio ni una cantidad. Los errores vuelven como `{ ok: false, error }`
  * legible: el agente se lo explica al cliente en vez de decir que se confirmó.
  */
-export async function confirmDraft(businessId: string, conversationId: string) {
-  return withDb(systemCtx, async (tx) => {
+export async function confirmDraft(businessId: string, conversationId: string, options: QuoteOptions = {}) {
+  try { return await withDb(systemCtx, async (tx) => {
+    await tx.$queryRaw`select id from public.whatsapp_order_drafts where business_id = ${businessId}::uuid and conversation_id = ${conversationId}::uuid for update`;
     const draft = await tx.whatsappOrderDraft.findFirst({
       where: { conversationId, businessId },
       include: { items: { orderBy: { createdAt: "asc" } } }
@@ -530,7 +546,6 @@ export async function confirmDraft(businessId: string, conversationId: string) {
       notes: item.notes
     }));
 
-    try {
       const payload = await buildOrderPayload(tx, business, {
         customer: {
           name: d.customerName,
@@ -545,6 +560,11 @@ export async function confirmDraft(businessId: string, conversationId: string) {
         paymentMethod: d.paymentMethod,
         items
       });
+      const { orderCode: _generatedCode, ...details } = payload;
+      void _generatedCode;
+      const quote = { action: "confirmar_pedido", draftId: draft.id, ...details };
+      checkQuote(quote, options);
+      if (options.quoteOnly) return { ok: true as const, quote };
       const order = await persistOrder(tx, { ...payload, source: "whatsapp", conversationId });
       await tx.whatsappOrderDraft.update({
         where: { id: draft.id },
@@ -581,23 +601,34 @@ export async function confirmDraft(businessId: string, conversationId: string) {
             }
           : {})
       };
-    } catch (err) {
-      // Mensaje legible para el cliente final, no un stack.
-      return fail(err instanceof Error ? err.message : "No se pudo confirmar el pedido.");
-    }
-  });
+  }); } catch (err) {
+    // Catch outside the transaction: no partial order may commit on an error.
+    if (err instanceof ApiError && err.code === "VALIDATION_ERROR") return fail(err.message);
+    throw err;
+  }
 }
 
 // ── Pedido ya confirmado ────────────────────────────────────────────────────
 
+/** Legacy RPCs scope codes to business only; validate contact before invoking them. */
+async function contactOrderRpc(businessId: string, conversationId: string, orderCode: string | undefined, sql: (code: string) => Prisma.Sql) {
+  return withDb(systemCtx, async (tx) => {
+    const id = await repo.resolveOrderId(tx, businessId, conversationId, orderCode);
+    const order = id ? await repo.orderCodeById(tx, businessId, id) : null;
+    if (!order) return { ok: false, error: "No encontré ningún pedido con esos datos." };
+    const rows = await tx.$queryRaw<{ result: Json }[]>(sql(order.orderCode));
+    return rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+  });
+}
+
 export const updateOrderDetails = (i: OrderDetailsInput) =>
-  rpc(Prisma.sql`select public.agent_order_update_details(
-    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${i.orderCode ?? null},
+  contactOrderRpc(i.businessId, i.conversationId, i.orderCode, (code) => Prisma.sql`select public.agent_order_update_details(
+    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${code},
     ${i.orderType ?? null}, ${i.deliveryAddress ?? null}, ${i.paymentMethod ?? null}) as result`);
 
 export const addDraftItemsToOrder = (businessId: string, conversationId: string, orderCode?: string) =>
-  rpc(
-    Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
+  contactOrderRpc(businessId, conversationId, orderCode,
+    (code) => Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${code}) as result`
   );
 
 // ── Comprobantes de pago ────────────────────────────────────────────────────
@@ -612,8 +643,10 @@ const PROOF_EXTENSIONS: Record<string, string> = {
 /** El comprobante se guarda contra un pedido: el del código, o el último de la conversación. */
 async function resolveOrder(tx: Tx, businessId: string, conversationId: string, orderCode?: string | null) {
   if (orderCode) {
+    const id = await repo.resolveOrderId(tx, businessId, conversationId, orderCode, true);
+    if (!id) return null;
     return tx.order.findFirst({
-      where: { businessId, orderCode: orderCode.toUpperCase() },
+      where: { businessId, id },
       select: { id: true, orderCode: true }
     });
   }

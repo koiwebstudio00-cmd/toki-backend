@@ -43,6 +43,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # El worker cancela y espera trabajos activos antes de cerrar la base.
+    stop_grace_period: 60s
     depends_on:
       toki-db:
         condition: service_healthy
@@ -58,6 +60,14 @@ services:
       FRONT_URL: ${FRONT_URL:?Falta FRONT_URL}
       JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET}
       AGENT_API_KEY_SHA256: ${AGENT_API_KEY_SHA256:?Falta AGENT_API_KEY_SHA256}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_TRANSCRIPTION_MODEL: ${OPENAI_TRANSCRIPTION_MODEL:-gpt-transcribe}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      AI_GATEWAY_MODEL: ${AI_GATEWAY_MODEL:-}
+      AGENT_WORKER_ENABLED: ${AGENT_WORKER_ENABLED:-false}
+      AGENT_WORKER_CONCURRENCY: ${AGENT_WORKER_CONCURRENCY:-4}
+      ZERNIO_WEBHOOK_SECRET: ${ZERNIO_WEBHOOK_SECRET:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-465}
       SMTP_USER: ${SMTP_USER:-resend}

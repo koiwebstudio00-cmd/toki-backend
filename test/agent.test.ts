@@ -235,9 +235,9 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .get(`/v1/agent/conversations/${conversationId}/context?businessId=${otro.businessId}`)
         .set(key)
-        .expect(200);
-      // Devuelve el contexto del negocio pedido, pero la conversación (que es de
-      // otro) no aparece: las funciones filtran por (conversación, negocio).
+        .expect(404);
+      expect(res.body.error.code).toBe("NOT_FOUND");
+      expect(res.body.agent_prompt).toBeUndefined();
       expect(JSON.stringify(res.body)).not.toContain(conversationId);
       expect(JSON.stringify(res.body)).not.toContain("3815557777");
     });
@@ -499,7 +499,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .post("/v1/agent/payment-proofs")
         .set(key)
-        .send({ ...draft(), mediaUrl: "https://zernio.com/media/1.jpg", mediaType: "image" })
+        .send({ ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/1", mediaType: "image" })
         .expect(200);
 
       expect(res.body).toMatchObject({ ok: true, duplicate: false, orderCode: order.orderCode });
@@ -511,7 +511,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
     it("el mismo mensaje no guarda dos comprobantes", async () => {
       await pedidoConfirmado();
       mockDownload();
-      const body = { ...draft(), mediaUrl: "https://zernio.com/media/1.jpg", providerMessageId: "msg-9" };
+      const body = { ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/1", providerMessageId: "msg-9" };
 
       await request(app).post("/v1/agent/payment-proofs").set(key).send(body).expect(200);
       const repetido = await request(app).post("/v1/agent/payment-proofs").set(key).send(body).expect(200);
@@ -525,7 +525,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .post("/v1/agent/payment-proofs")
         .set(key)
-        .send({ ...draft(), mediaUrl: "https://zernio.com/media/1.jpg" })
+        .send({ ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/1" })
         .expect(200);
       expect(res.body).toMatchObject({ ok: false });
       expect(res.body.error).toMatch(/pedido/i);
@@ -538,7 +538,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .post("/v1/agent/payment-proofs")
         .set(key)
-        .send({ ...draft(), mediaUrl: "https://zernio.com/media/1.html" })
+        .send({ ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/2" })
         .expect(200);
       expect(res.body).toMatchObject({ ok: false });
       expect(res.body.error).toMatch(/imagen|PDF/i);

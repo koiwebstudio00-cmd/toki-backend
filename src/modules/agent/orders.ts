@@ -7,6 +7,7 @@
 //   pagado, deja un reembolso pendiente.
 // - Modificar: en `pending`, `confirmed` o `preparing` (D4). Un pedido pagado
 //   puede quedar con saldo a pagar o con un reembolso pendiente.
+import { checkQuote, type QuoteOptions } from "./quote.js";
 import type { Prisma } from "@prisma/client";
 import { systemCtx, type Tx, withDb } from "../../lib/db.js";
 import { ApiError } from "../../lib/errors.js";
@@ -99,7 +100,7 @@ interface Changes {
  * entrega, dirección y medio de pago. Todo se valida antes de escribir; si algo
  * no se puede, no se toca nada.
  */
-export async function modifyOrder(input: ModifyOrderInput) {
+export async function modifyOrder(input: ModifyOrderInput, options: QuoteOptions = {}) {
   return run(async (tx) => {
     if (!(await repo.conversationBelongs(tx, input.businessId, input.conversationId))) {
       throw new Rejected("Conversacion invalida.");
@@ -226,6 +227,12 @@ export async function modifyOrder(input: ModifyOrderInput) {
     const total = money(Math.max(0, subtotal + deliveryFee - discount));
     const totalBefore = toNumber(order.total);
 
+    const quote = { action: "modificar_pedido", orderId: order.id, orderCode: order.orderCode,
+      status: order.status, totalBefore, total, paymentStatus: order.paymentStatus, changes,
+      items: kept.map(i => ({ name: i.productName, quantity: newQuantity.get(i.id), unitPrice: Number(i.unitPrice) })),
+      added: priced, orderType, address, paymentMethod, deliveryFee, discount };
+    checkQuote(quote, options);
+    if (options.quoteOnly) return { ok: true as const, quote };
     // ── Escritura ──
     if (restock.length) await repo.restock(tx, order.id, restock);
     await repo.deductStock(tx, input.businessId, deduct);
@@ -371,7 +378,7 @@ export async function modifyOrder(input: ModifyOrderInput) {
  * cupón y los puntos; si estaba pagado deja un reembolso pendiente para que el
  * agente pida a dónde devolver y derive.
  */
-export async function cancelOrder(input: CancelOrderInput) {
+export async function cancelOrder(input: CancelOrderInput, options: QuoteOptions = {}) {
   return run(async (tx) => {
     if (!(await repo.conversationBelongs(tx, input.businessId, input.conversationId))) {
       throw new Rejected("Conversacion invalida.");
@@ -388,6 +395,10 @@ export async function cancelOrder(input: CancelOrderInput) {
       throw new Rejected(lockedReason(order.status, "cancelar"), { derivar: true });
     }
 
+    const quote = { action: "cancelar_pedido", orderId: order.id, orderCode: order.orderCode,
+      status: order.status, total: Number(order.total), paymentStatus: order.paymentStatus, reason: input.reason ?? null };
+    checkQuote(quote, options);
+    if (options.quoteOnly) return { ok: true as const, quote };
     await tx.order.update({
       where: { id: order.id },
       data: { status: "cancelled", whatsappConversationId: order.whatsappConversationId ?? input.conversationId }
@@ -496,6 +507,7 @@ export async function setRefundDestination(input: RefundDestinationInput) {
     }
     const code = repo.normalizeOrderCode(input.orderCode);
     const orderId = code ? await repo.resolveOrderId(tx, input.businessId, input.conversationId, code) : null;
+    if (input.orderCode?.trim() && !orderId) throw new Rejected("No encontré ese pedido.");
     const refund = await repo.pendingRefund(tx, input.businessId, input.conversationId, orderId);
     if (!refund) throw new Rejected("No hay ningún reembolso pendiente para esta conversación.");
 

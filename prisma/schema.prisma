@@ -83,8 +83,13 @@ model BotSettings {
   isEnabled       Boolean  @default(true) @map("is_enabled")
   botName         String   @default("Sofi") @map("bot_name")
   tone            String   @default("friendly")
+  engine          String   @default("legacy")
+  dailyTurnLimit  Int      @default(500) @map("daily_turn_limit")
   fallbackMessage String   @default("Te derivo con una persona del equipo para que pueda ayudarte.") @map("fallback_message")
   handoffEnabled  Boolean  @default(true) @map("handoff_enabled")
+  instructions    String   @default("")
+  businessContext String   @default("") @map("business_context")
+  enabledTools    String[] @default(["create_orders", "order_status", "modify_orders", "cancel_orders", "payment_proofs", "refund_details"]) @map("enabled_tools")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
   business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -145,6 +150,7 @@ model BusinessSpecialHour {
 }
 
 model Business {
+  agentActions              AgentAction[]
   id                        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                      String
   slug                      String                   @unique
@@ -578,6 +584,7 @@ model Profile {
 }
 
 model WhatsappConversation {
+  agentActions        AgentAction[]
   id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   businessId          String              @map("business_id") @db.Uuid
   customerId          String?             @map("customer_id") @db.Uuid
@@ -652,6 +659,8 @@ model WhatsappIntegration {
 }
 
 model WhatsappMessage {
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  agentActions      AgentAction[]
   id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   businessId        String               @map("business_id") @db.Uuid
   conversationId    String               @map("conversation_id") @db.Uuid
@@ -666,7 +675,29 @@ model WhatsappMessage {
   conversation      WhatsappConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt], map: "idx_whatsapp_messages_conversation_id")
+  @@unique([businessId, conversationId, id], map: "whatsapp_messages_agent_identity")
   @@map("whatsapp_messages")
+  @@schema("public")
+}
+
+model AgentAction {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId     String   @map("business_id") @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  messageId      String   @map("message_id") @db.Uuid
+  toolName       String   @map("tool_name")
+  inputHash      String   @map("input_hash")
+  status         String   @default("started")
+  result         Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation   WhatsappConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message        WhatsappMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, toolName, inputHash])
+  @@index([businessId, createdAt], map: "agent_actions_business_created")
+  @@map("agent_actions")
   @@schema("public")
 }
 
@@ -845,5 +876,48 @@ model OrderRefund {
   @@index([businessId, status, requestedAt], map: "order_refunds_business_idx")
   @@index([orderId], map: "order_refunds_order_idx")
   @@map("order_refunds")
+  @@schema("public")
+}
+
+model AgentTurn {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  messageId String @unique @map("message_id") @db.Uuid
+  accountId String @map("account_id")
+  providerConversationId String @map("provider_conversation_id")
+  status String @default("queued")
+  availableAt DateTime @default(now()) @map("available_at") @db.Timestamptz(6)
+  claimedAt DateTime? @map("claimed_at") @db.Timestamptz(6)
+  reply String?
+  buttons Json?
+  providerMessageId String? @map("provider_message_id")
+  errorCode String? @map("error_code")
+  usage Json?
+  configuration Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  @@map("agent_turns")
+  @@schema("public")
+}
+model AgentApproval {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  messageId String @map("message_id") @db.Uuid
+  toolName String @map("tool_name")
+  args Json
+  quote Json
+  status String @default("pending")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("agent_approvals")
+  @@schema("public")
+}
+model AgentWebhookEvent {
+  failure Json?
+  id String @id
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("agent_webhook_events")
   @@schema("public")
 }

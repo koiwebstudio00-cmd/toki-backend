@@ -26,15 +26,16 @@ import {
   upsertConversationSchema
 } from "./schemas.js";
 import * as orders from "./orders.js";
+import { requireCapability, requireLegacyEngine } from "./permissions.js";
 import * as svc from "./service.js";
 import { receiveCatalog, receiveCatalogSchema } from "../catalog/service.js";
 
 /** /v1/agent — n8n, autenticado con X-Api-Key. */
 export const agentRoutes = Router();
 
-agentRoutes.use(requireApiKey);
+agentRoutes.use(requireApiKey, requireLegacyEngine);
 
-agentRoutes.post("/catalog-orders", async (req, res) => {
+agentRoutes.post("/catalog-orders", requireCapability("create_orders"), async (req, res) => {
   res.json(await receiveCatalog(receiveCatalogSchema.parse(req.body)));
 });
 
@@ -93,13 +94,13 @@ agentRoutes.get("/faq/search", async (req, res) => {
 
 // Borrador. `/draft/...` va antes que `/orders/:orderCode` por claridad de lectura;
 // no comparten prefijo, así que no hay ambigüedad de ruteo.
-agentRoutes.get("/draft", async (req, res) => {
+agentRoutes.get("/draft", requireCapability("create_orders"), async (req, res) => {
   const { businessId, conversationId } = conversationQuery.parse(req.query);
   res.json(await svc.draftGet(businessId, conversationId));
 });
 
 // Un item (`productId`) o varios (`items`, v3).
-agentRoutes.post("/draft/items", async (req, res) => {
+agentRoutes.post("/draft/items", requireCapability("create_orders"), async (req, res) => {
   if (req.body && typeof req.body === "object" && "items" in req.body) {
     res.json(await svc.draftAddItems(draftAddItemsSchema.parse(req.body)));
     return;
@@ -108,28 +109,28 @@ agentRoutes.post("/draft/items", async (req, res) => {
 });
 
 // Cambiar la cantidad de un item del borrador; 0 lo saca (v3).
-agentRoutes.patch("/draft/items/:itemId", async (req, res) => {
+agentRoutes.patch("/draft/items/:itemId", requireCapability("create_orders"), async (req, res) => {
   const { itemId } = itemIdParam.parse(req.params);
   const { businessId, conversationId, quantity } = draftItemQuantitySchema.parse(req.body);
   res.json(await svc.draftSetItemQuantity(businessId, conversationId, itemId, quantity));
 });
 
-agentRoutes.delete("/draft/items/:itemId", async (req, res) => {
+agentRoutes.delete("/draft/items/:itemId", requireCapability("create_orders"), async (req, res) => {
   const { itemId } = itemIdParam.parse(req.params);
   const { businessId, conversationId } = conversationQuery.parse(req.query);
   res.json(await svc.draftRemoveItem(businessId, conversationId, itemId));
 });
 
-agentRoutes.patch("/draft", async (req, res) => {
+agentRoutes.patch("/draft", requireCapability("create_orders"), async (req, res) => {
   res.json(await svc.draftSetDetails(draftDetailsSchema.parse(req.body)));
 });
 
-agentRoutes.delete("/draft", async (req, res) => {
+agentRoutes.delete("/draft", requireCapability("create_orders"), async (req, res) => {
   const { businessId, conversationId } = conversationQuery.parse(req.query);
   res.json(await svc.draftCancel(businessId, conversationId));
 });
 
-agentRoutes.post("/draft/confirm", async (req, res) => {
+agentRoutes.post("/draft/confirm", requireCapability("create_orders"), async (req, res) => {
   const { businessId, conversationId } = confirmDraftSchema.parse(req.body);
   const result = await svc.confirmDraft(businessId, conversationId);
   // 201 solo cuando el pedido se creó recién. Un reintento (`yaExistia`) y los
@@ -140,7 +141,7 @@ agentRoutes.post("/draft/confirm", async (req, res) => {
 });
 
 // Pedido ya confirmado
-agentRoutes.get("/orders/status", async (req, res) => {
+agentRoutes.get("/orders/status", requireCapability("order_status"), async (req, res) => {
   const { businessId, conversationId, orderCode } = orderStatusQuery.parse(req.query);
   res.json(await svc.orderStatus(businessId, conversationId, orderCode));
 });
@@ -148,30 +149,30 @@ agentRoutes.get("/orders/status", async (req, res) => {
 // `orderCode` va en el cuerpo y es opcional: sin código, la función SQL toma el
 // último pedido editable del contacto. Con el código en la URL no había forma
 // de expresar ese caso, que es el más común ("cambiame la dirección").
-agentRoutes.patch("/orders", async (req, res) => {
+agentRoutes.patch("/orders", requireCapability("modify_orders"), async (req, res) => {
   res.json(await svc.updateOrderDetails(orderDetailsSchema.parse(req.body)));
 });
 
-agentRoutes.post("/orders/items", async (req, res) => {
+agentRoutes.post("/orders/items", requireCapability("modify_orders"), async (req, res) => {
   const { businessId, conversationId, orderCode } = addDraftItemsSchema.parse(req.body);
   res.json(await svc.addDraftItemsToOrder(businessId, conversationId, orderCode));
 });
 
 // v3: cambios sobre un pedido hecho (pending, confirmed o preparing).
-agentRoutes.post("/orders/modify", async (req, res) => {
+agentRoutes.post("/orders/modify", requireCapability("modify_orders"), async (req, res) => {
   res.json(await orders.modifyOrder(modifyOrderSchema.parse(req.body)));
 });
 
 // v3: cancelar un pedido que el local todavía no aceptó.
-agentRoutes.post("/orders/cancel", async (req, res) => {
+agentRoutes.post("/orders/cancel", requireCapability("cancel_orders"), async (req, res) => {
   res.json(await orders.cancelOrder(cancelOrderSchema.parse(req.body)));
 });
 
 // v3: a dónde devolver la plata del reembolso pendiente.
-agentRoutes.patch("/refunds/current", async (req, res) => {
+agentRoutes.patch("/refunds/current", requireCapability("refund_details"), async (req, res) => {
   res.json(await orders.setRefundDestination(refundDestinationSchema.parse(req.body)));
 });
 
-agentRoutes.post("/payment-proofs", async (req, res) => {
+agentRoutes.post("/payment-proofs", requireCapability("payment_proofs"), async (req, res) => {
   res.json(await svc.savePaymentProof(paymentProofSchema.parse(req.body)));
 });

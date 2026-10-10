@@ -163,8 +163,11 @@ SpecialHour = { id?, date: "YYYY-MM-DD", isClosed, opensAt: "HH:mm" | null, clos
 | PUT | `/settings/payments` | A | `{ cashEnabled, transferEnabled, transferCbu?, transferAlias?, transferHolder?, transferBank? }` | `payment_settings.upsert` |
 | GET | `/settings/loyalty` | M | — | `loyalty_settings.select` |
 | PUT | `/settings/loyalty` | A | `{ isEnabled, pointsPerCurrency, pointsPerOrder, redeemRate, minPointsToRedeem }` | `loyalty_settings.upsert` |
-| GET | `/settings/bot` | M | — | `bot_settings` (hoy la pantalla es un mock) |
-| PATCH | `/settings/bot` | A | `{ isEnabled?, botName?, tone?, fallbackMessage?, handoffEnabled? }` | — |
+| GET | `/settings/bot` | M | — | Configuración persistida de `bot_settings`, incluye `updatedAt` |
+| PATCH | `/settings/bot` | A | `{ isEnabled?, botName?, tone?, fallbackMessage?, handoffEnabled?, instructions?, businessContext?, enabledTools? }` | Cambios parciales; devuelve la configuración completa |
+| GET | `/settings/bot/capabilities` | M | — | `{ data: [{ id, label, description, tools }] }`, catálogo de capacidades |
+| GET | `/settings/bot/preview` | A | — | `{ available, maxTurns: 12, mode: "read_only" }` |
+| POST | `/settings/bot/preview/messages` | A | `{ message, state? }` | `{ reply, state, turns, completed, toolCalls, usage: { inputTokens, outputTokens } }` |
 | GET | `/settings/bot/faqs` | M | — | `bot_faqs` |
 | POST | `/settings/bot/faqs` | A | `{ question, answer, isActive? }` | — |
 | PATCH | `/settings/bot/faqs/:id` | A | `{ question?, answer?, isActive? }` | — |
@@ -180,6 +183,48 @@ SpecialHour = { id?, date: "YYYY-MM-DD", isClosed, opensAt: "HH:mm" | null, clos
 - `mercadopagoEnabled: true` → 400 "Mercado Pago todavía no está disponible".
 
 **FAQs:** máximo 200 por negocio.
+
+**Asistente configurable (2026-10-08):**
+
+- `instructions`: hasta 8000 caracteres; orienta la atención, sin imponer respuestas predefinidas.
+- `businessContext`: hasta 12000 caracteres; información del negocio. Catálogo, precios, stock y operaciones siguen viniendo de Toki.
+- `enabledTools`: lista completa de capacidades habilitadas. `[]` deja solo consultas al catálogo y FAQs; omitir el campo conserva los permisos anteriores. No se aceptan valores desconocidos ni duplicados.
+- Capacidades: `create_orders`, `order_status`, `modify_orders`, `cancel_orders`, `payment_proofs`, `refund_details`. La derivación sigue usando `handoffEnabled`.
+- Los defaults conservan las capacidades existentes. RLS permite leer a miembros y editar solo a dueños/administradores.
+- Las rutas de acciones de `/agent` verifican permisos en cada petición, incluidas las rutas heredadas y `/catalog-orders`. Una capacidad deshabilitada o un bot pausado devuelve `403 FORBIDDEN`. Las instrucciones del negocio no pueden conceder permisos.
+- `/agent/conversations/:id/context` exige que la conversación pertenezca al negocio y devuelve `agent_prompt`, `allowed_tools` y `agent_config_updated_at`. Omite `active_order` si no está habilitado `order_status`, y `draft` si no está habilitado `create_orders`.
+- La configuración se aplica a los turnos siguientes. `updatedAt` identifica el momento de edición; todavía no es un sistema de versiones publicadas ni un historial inmutable.
+- Desplegar migración `0013_agent_configuration` y API antes de importar el workflow actualizado `toki-agent-v3.json`. El workflow nuevo requiere `agent_prompt`; falla explícitamente si falta. Publicar el panel después de actualizar el workflow para que las instrucciones guardadas se utilicen desde el primer cambio.
+- Las rutas heredadas usan `authorizeCapability`; el motor nativo usa `authorizeNativeRead` y `executeNativeAction`, que además validan contacto, mensaje, canal y atención humana.
+
+**Motor nativo y chat de prueba (consultas):**
+
+- AI SDK `ToolLoopAgent` ejecuta el ciclo modelo → herramientas → respuesta. Usa la configuración guardada y únicamente `buscar_productos`, `ver_producto` y `buscar_faq`. Consulta precios, opciones, disponibilidad, FAQs activas y horarios bajo RLS del usuario, con el negocio fijado por el servidor.
+- Este entorno no expone pedidos reales, clientes, comprobantes ni herramientas de escritura. No simula operaciones exitosas. Permite probar el tono y conocimiento incluso si WhatsApp está pausado. La atención real se activa por separado desde la sección WhatsApp del asistente.
+- Configurar `OPENAI_API_KEY` y `OPENAI_MODEL` en el entorno **del servidor** y reiniciar la API. Se usa OpenAI Responses directamente. Como alternativa, dejar ambos campos vacíos y configurar `AI_GATEWAY_API_KEY` y `AI_GATEWAY_MODEL` con el ID `provider/model` del [catálogo vigente de Gateway](https://ai-gateway.vercel.sh/v1/models). Una configuración parcial de OpenAI bloquea la prueba; nunca se hace fallback silencioso. No hay modelo por defecto. Las credenciales nunca se envían al navegador. El estado `available` confirma configuración, no conectividad ni saldo del proveedor.
+- El navegador envía solo el mensaje (1–2000 caracteres) y el `state` recibido. El servidor firma la memoria con una clave derivada, la vincula a usuario/negocio/configuración y la hace vencer a los 30 minutos. No se aceptan historiales o roles arbitrarios. Es una firma, no cifrado: el token contiene la conversación de prueba y no debe registrarse ni compartirse.
+- La memoria se conserva únicamente en el componente del panel; al salir, reiniciar o guardar cambios se descarta. Catálogo y FAQs se consultan en vivo. `state: null, completed: true` indica fin por 12 turnos o tamaño máximo de memoria; iniciar otra conversación sin `state`.
+- Límites: 6 requests/minuto/IP, una generación simultánea por usuario/negocio por proceso, 5 pasos de modelo (último sin herramientas), 12 consultas de datos por turno, 1200 tokens de salida por paso, 30 segundos de generación, sin reintentos automáticos al proveedor. Los límites de esta previsualización son por proceso. El canal nativo tiene cola y presupuesto distribuido en PostgreSQL.
+- Ambas respuestas tienen `Cache-Control: no-store`. `403` por permisos o memoria de otra sesión, `409` por prueba vencida/configuración modificada/generación simultánea, `429` por frecuencia y `503 SERVICE_UNAVAILABLE` por proveedor no configurado, error, timeout o respuesta incompleta. Los errores del modelo no se sustituyen por respuestas predefinidas ni exponen detalles del proveedor.
+- `test/agent-preview.test.ts` prueba llamadas a herramientas con datos reales de la BD de test y modelo simulado, memoria, aislamiento, ausencia de escrituras y errores. La calidad conversacional y la compatibilidad del modelo elegido requieren evaluación con credenciales reales antes del piloto.
+
+**Canal nativo de WhatsApp (2026-10-08):**
+
+| Método | Ruta | Auth | Contrato |
+| --- | --- | --- | --- |
+| POST | `/webhooks/zernio` | HMAC raw `X-Zernio-Signature` | Evento oficial de Zernio. Guarda de forma durable y devuelve `{ accepted: true, duplicate? }`; no llama al modelo en el webhook. |
+| GET | `/settings/bot/channel` | A | `{ engine, dailyTurnLimit, ready, connected, phone, turns: [{ id, conversationId, status, errorCode, usage, createdAt, updatedAt }] }`, últimos 40 turnos. `ready` confirma configuración, no conectividad. |
+| PATCH | `/settings/bot/channel` | A | `{ engine: "legacy" | "native", dailyTurnLimit: 1..10000 }`. Nativo requiere servidor configurado y cuenta conectada. Devuelve el estado del canal. |
+| POST | `/settings/bot/channel/turns/:id/review` | A | `{ action: "retry" | "reviewed", note: 10..500 caracteres }`. Solo turnos fallidos/inciertos, después de dos minutos. Registra operador y nota; el reintento exige ausencia de escrituras/respuesta, último mensaje y conversación abierta. |
+
+- `createNativeAgent` y `createNativeTools` fijan negocio/contacto/mensaje desde el servidor. Las herramientas reutilizan precios, stock, borradores, pedidos, casos, comprobantes y devoluciones. La resolución por código exige también pertenencia al contacto (incluye pedidos web por teléfono).
+- La cola y la bandeja de salida persistentes viven en `agent_turns`, las decisiones del cliente en `agent_approvals`, las escrituras en `agent_actions`. Las tablas internas no se exponen a roles del navegador.
+- El canal sustituye la aprobación SDK por propuestas persistidas: los tres cambios sensibles solo preparan un resumen. Botones firmados y vinculados al contacto permiten ejecutarlo; se recalcula el importe en la misma transacción comercial. Sin adaptador de canal, las herramientas siguen requiriendo aprobación SDK y no se autoejecutan.
+- Cada herramienta relee permisos y estado. Nuevos mensajes, cambio de motor/cuenta, pausa, atención humana y acciones inciertas bloquean nuevas operaciones. Una transacción o envío que ya comenzó puede terminar; se vuelve a validar antes del siguiente paso.
+- Las acciones y envíos de resultado incierto requieren revisión explícita. No se promete ejecución exactamente una vez. El panel conserva nota y operador y permite retomar por separado la conversación.
+- `resolveIntegration` devuelve `engine`; `botEnabled` es false para motores nativos. Las rutas heredadas de herramientas devuelven 409 si el negocio usa el motor nativo.
+- Adjuntos del mensaje verificado se descargan únicamente del endpoint HTTPS de medios de Zernio, sin redirects y con límite de bytes. Guardar comprobantes no acredita pagos; los datos para devoluciones no transfieren dinero.
+- Activación, variables, límites, comportamiento ante fallos y pruebas finales: [guía del agente nativo](agente-nativo.md).
 
 ---
 
@@ -515,7 +560,7 @@ Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (
 | auth | 9 |
 | account | 2 |
 | businesses | 10 |
-| settings | 10 |
+| settings | 13 |
 | coupons | 4 |
 | catalog | 16 (15 + reorder) |
 | uploads | 1 |
@@ -527,4 +572,4 @@ Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (
 | public | 5 |
 | cases | 1 |
 | refunds | 4 |
-| **Total** | **108** |
+| **Total** | **111** |

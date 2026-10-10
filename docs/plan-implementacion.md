@@ -166,3 +166,8 @@ F7 al final, con todo lo anterior verificado
 | Cookies o sesión en Safari | Resuelto por diseño: Bearer + refresh en el cliente |
 | El VPS compartido con Lamelas se queda corto de recursos | Monitorear RAM y CPU en Dokploy; separar VPS si hace falta. Postgres de Toki con `shared_buffers` moderado |
 | Emails a spam | SPF, DKIM y DMARC del dominio en Resend antes de F1 en producción |
+
+
+## Agente nativo por negocio — 2026-10-08
+
+Configuración, preview aislado, herramientas operativas, webhook firmado de Zernio, cola PostgreSQL, presupuesto por negocio, confirmaciones con importes verificados, bandeja de salida, adjuntos/comprobantes, derivación humana y panel de revisión implementados. Migraciones 0013–0016. Pruebas locales con base aislada y proveedores simulados. El 10/10 se verificó OpenAI directo con catálogo, memoria, herramientas nativas y transcripción real; pendiente el piloto completo WhatsApp/Zernio/R2 y el despliegue. Procedimiento: [agente-nativo.md](agente-nativo.md).
