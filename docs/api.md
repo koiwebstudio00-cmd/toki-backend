@@ -163,8 +163,11 @@ SpecialHour = { id?, date: "YYYY-MM-DD", isClosed, opensAt: "HH:mm" | null, clos
 | PUT | `/settings/payments` | A | `{ cashEnabled, transferEnabled, transferCbu?, transferAlias?, transferHolder?, transferBank? }` | `payment_settings.upsert` |
 | GET | `/settings/loyalty` | M | — | `loyalty_settings.select` |
 | PUT | `/settings/loyalty` | A | `{ isEnabled, pointsPerCurrency, pointsPerOrder, redeemRate, minPointsToRedeem }` | `loyalty_settings.upsert` |
-| GET | `/settings/bot` | M | — | `bot_settings` (hoy la pantalla es un mock) |
-| PATCH | `/settings/bot` | A | `{ isEnabled?, botName?, tone?, fallbackMessage?, handoffEnabled? }` | — |
+| GET | `/settings/bot` | M | — | Configuración persistida de `bot_settings`, incluye `updatedAt` |
+| PATCH | `/settings/bot` | A | `{ isEnabled?, botName?, tone?, fallbackMessage?, handoffEnabled?, instructions?, businessContext?, enabledTools? }` | Cambios parciales; devuelve la configuración completa |
+| GET | `/settings/bot/capabilities` | M | — | `{ data: [{ id, label, description, tools }] }`, catálogo de capacidades |
+| GET | `/settings/bot/preview` | A | — | `{ available, maxTurns: 12, mode: "read_only" }` |
+| POST | `/settings/bot/preview/messages` | A | `{ message, state? }` | `{ reply, state, turns, completed, toolCalls, usage: { inputTokens, outputTokens } }` |
 | GET | `/settings/bot/faqs` | M | — | `bot_faqs` |
 | POST | `/settings/bot/faqs` | A | `{ question, answer, isActive? }` | — |
 | PATCH | `/settings/bot/faqs/:id` | A | `{ question?, answer?, isActive? }` | — |
@@ -180,6 +183,48 @@ SpecialHour = { id?, date: "YYYY-MM-DD", isClosed, opensAt: "HH:mm" | null, clos
 - `mercadopagoEnabled: true` → 400 "Mercado Pago todavía no está disponible".
 
 **FAQs:** máximo 200 por negocio.
+
+**Asistente configurable (2026-10-08):**
+
+- `instructions`: hasta 8000 caracteres; orienta la atención, sin imponer respuestas predefinidas.
+- `businessContext`: hasta 12000 caracteres; información del negocio. Catálogo, precios, stock y operaciones siguen viniendo de Toki.
+- `enabledTools`: lista completa de capacidades habilitadas. `[]` deja solo consultas al catálogo y FAQs; omitir el campo conserva los permisos anteriores. No se aceptan valores desconocidos ni duplicados.
+- Capacidades: `create_orders`, `order_status`, `modify_orders`, `cancel_orders`, `payment_proofs`, `refund_details`. La derivación sigue usando `handoffEnabled`.
+- Los defaults conservan las capacidades existentes. RLS permite leer a miembros y editar solo a dueños/administradores.
+- Las rutas de acciones de `/agent` verifican permisos en cada petición, incluidas las rutas heredadas y `/catalog-orders`. Una capacidad deshabilitada o un bot pausado devuelve `403 FORBIDDEN`. Las instrucciones del negocio no pueden conceder permisos.
+- `/agent/conversations/:id/context` exige que la conversación pertenezca al negocio y devuelve `agent_prompt`, `allowed_tools` y `agent_config_updated_at`. Omite `active_order` si no está habilitado `order_status`, y `draft` si no está habilitado `create_orders`.
+- La configuración se aplica a los turnos siguientes. `updatedAt` identifica el momento de edición; todavía no es un sistema de versiones publicadas ni un historial inmutable.
+- Desplegar migración `0013_agent_configuration` y API antes de importar el workflow actualizado `toki-agent-v3.json`. El workflow nuevo requiere `agent_prompt`; falla explícitamente si falta. Publicar el panel después de actualizar el workflow para que las instrucciones guardadas se utilicen desde el primer cambio.
+- Las rutas heredadas usan `authorizeCapability`; el motor nativo usa `authorizeNativeRead` y `executeNativeAction`, que además validan contacto, mensaje, canal y atención humana.
+
+**Motor nativo y chat de prueba (consultas):**
+
+- AI SDK `ToolLoopAgent` ejecuta el ciclo modelo → herramientas → respuesta. Usa la configuración guardada y únicamente `buscar_productos`, `ver_producto` y `buscar_faq`. Consulta precios, opciones, disponibilidad, FAQs activas y horarios bajo RLS del usuario, con el negocio fijado por el servidor.
+- Este entorno no expone pedidos reales, clientes, comprobantes ni herramientas de escritura. No simula operaciones exitosas. Permite probar el tono y conocimiento incluso si WhatsApp está pausado. La atención real se activa por separado desde la sección WhatsApp del asistente.
+- Configurar `OPENAI_API_KEY` y `OPENAI_MODEL` en el entorno **del servidor** y reiniciar la API. Se usa OpenAI Responses directamente. Como alternativa, dejar ambos campos vacíos y configurar `AI_GATEWAY_API_KEY` y `AI_GATEWAY_MODEL` con el ID `provider/model` del [catálogo vigente de Gateway](https://ai-gateway.vercel.sh/v1/models). Una configuración parcial de OpenAI bloquea la prueba; nunca se hace fallback silencioso. No hay modelo por defecto. Las credenciales nunca se envían al navegador. El estado `available` confirma configuración, no conectividad ni saldo del proveedor.
+- El navegador envía solo el mensaje (1–2000 caracteres) y el `state` recibido. El servidor firma la memoria con una clave derivada, la vincula a usuario/negocio/configuración y la hace vencer a los 30 minutos. No se aceptan historiales o roles arbitrarios. Es una firma, no cifrado: el token contiene la conversación de prueba y no debe registrarse ni compartirse.
+- La memoria se conserva únicamente en el componente del panel; al salir, reiniciar o guardar cambios se descarta. Catálogo y FAQs se consultan en vivo. `state: null, completed: true` indica fin por 12 turnos o tamaño máximo de memoria; iniciar otra conversación sin `state`.
+- Límites: 6 requests/minuto/IP, una generación simultánea por usuario/negocio por proceso, 5 pasos de modelo (último sin herramientas), 12 consultas de datos por turno, 1200 tokens de salida por paso, 30 segundos de generación, sin reintentos automáticos al proveedor. Los límites de esta previsualización son por proceso. El canal nativo tiene cola y presupuesto distribuido en PostgreSQL.
+- Ambas respuestas tienen `Cache-Control: no-store`. `403` por permisos o memoria de otra sesión, `409` por prueba vencida/configuración modificada/generación simultánea, `429` por frecuencia y `503 SERVICE_UNAVAILABLE` por proveedor no configurado, error, timeout o respuesta incompleta. Los errores del modelo no se sustituyen por respuestas predefinidas ni exponen detalles del proveedor.
+- `test/agent-preview.test.ts` prueba llamadas a herramientas con datos reales de la BD de test y modelo simulado, memoria, aislamiento, ausencia de escrituras y errores. La calidad conversacional y la compatibilidad del modelo elegido requieren evaluación con credenciales reales antes del piloto.
+
+**Canal nativo de WhatsApp (2026-10-08):**
+
+| Método | Ruta | Auth | Contrato |
+| --- | --- | --- | --- |
+| POST | `/webhooks/zernio` | HMAC raw `X-Zernio-Signature` | Evento oficial de Zernio. Guarda de forma durable y devuelve `{ accepted: true, duplicate? }`; no llama al modelo en el webhook. |
+| GET | `/settings/bot/channel` | A | `{ engine, dailyTurnLimit, ready, connected, phone, turns: [{ id, conversationId, status, errorCode, usage, createdAt, updatedAt }] }`, últimos 40 turnos. `ready` confirma configuración, no conectividad. |
+| PATCH | `/settings/bot/channel` | A | `{ engine: "legacy" | "native", dailyTurnLimit: 1..10000 }`. Nativo requiere servidor configurado y cuenta conectada. Devuelve el estado del canal. |
+| POST | `/settings/bot/channel/turns/:id/review` | A | `{ action: "retry" | "reviewed", note: 10..500 caracteres }`. Solo turnos fallidos/inciertos, después de dos minutos. Registra operador y nota; el reintento exige ausencia de escrituras/respuesta, último mensaje y conversación abierta. |
+
+- `createNativeAgent` y `createNativeTools` fijan negocio/contacto/mensaje desde el servidor. Las herramientas reutilizan precios, stock, borradores, pedidos, casos, comprobantes y devoluciones. La resolución por código exige también pertenencia al contacto (incluye pedidos web por teléfono).
+- La cola y la bandeja de salida persistentes viven en `agent_turns`, las decisiones del cliente en `agent_approvals`, las escrituras en `agent_actions`. Las tablas internas no se exponen a roles del navegador.
+- El canal sustituye la aprobación SDK por propuestas persistidas: los tres cambios sensibles solo preparan un resumen. Botones firmados y vinculados al contacto permiten ejecutarlo; se recalcula el importe en la misma transacción comercial. Sin adaptador de canal, las herramientas siguen requiriendo aprobación SDK y no se autoejecutan.
+- Cada herramienta relee permisos y estado. Nuevos mensajes, cambio de motor/cuenta, pausa, atención humana y acciones inciertas bloquean nuevas operaciones. Una transacción o envío que ya comenzó puede terminar; se vuelve a validar antes del siguiente paso.
+- Las acciones y envíos de resultado incierto requieren revisión explícita. No se promete ejecución exactamente una vez. El panel conserva nota y operador y permite retomar por separado la conversación.
+- `resolveIntegration` devuelve `engine`; `botEnabled` es false para motores nativos. Las rutas heredadas de herramientas devuelven 409 si el negocio usa el motor nativo.
+- Adjuntos del mensaje verificado se descargan únicamente del endpoint HTTPS de medios de Zernio, sin redirects y con límite de bytes. Guardar comprobantes no acredita pagos; los datos para devoluciones no transfieren dinero.
+- Activación, variables, límites, comportamiento ante fallos y pruebas finales: [guía del agente nativo](agente-nativo.md).
 
 ---
 
@@ -309,7 +354,8 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 | --- | --- | --- | --- | --- | --- |
 | GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | `{ data: [pedido con items, opciones, historial y pagos], meta: { page, limit, total, pages } }` | `OrdersPage` |
 | GET | `/orders/:id` | M | — | Pedido completo (+ `barcode` de cada producto) | `refreshOrder` |
-| PATCH | `/orders/:id/status` | M | `{ status, note? }` | Pedido | RPC `update_order_status` |
+| PATCH | `/orders/:id/status` | M | `{ status, note? }` | Pedido | RPC `update_order_status`. Desde 0010 no deja salir de `cancelled`. Pasar a `cancelled` devuelve el stock (`restock_order_items`) y guarda `cancelled_by = business_dashboard` y la nota como motivo |
+| POST | `/orders/:id/modification-seen` | M | — | Pedido | Agente v3: el local vio los cambios del cliente (`modification_seen_at = now()`); la tarjeta deja de destacarse |
 | POST | `/orders/:id/mark-paid` | M | — | Pedido | RPC `mark_order_paid` |
 | POST | `/orders/manual` | M | `ManualSaleInput` | `201` pedido creado | RPC `create_manual_sale` (POS) |
 | GET | `/orders/:id/payment-proofs` | M | — | `{ data: [{ id, status, mediaType, createdAt, reviewedAt, url }] }` (`url` firmada, 10 min) | `order_payment_proofs` + `createSignedUrl` |
@@ -359,6 +405,7 @@ ManualSaleInput = {
 | Método | Ruta | Auth | Query | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/dashboard/summary` | M | `?days=30` | `{ sales: { today, week, month }, orders: { today, pending, byStatus }, averageTicket, salesByDay: [{ date, total, count }], topProducts: [...], lowStock: { products, optionValues, ingredients }, recentOrders: [10], bot: { enabled }, conversationsCount }` | `DashboardPage` (hoy baja 30 días de pedidos y calcula en el navegador) |
+| GET | `/dashboard/operations` | M | `?days=30` | `{ days, orders: { total, cancelled, cancelRate, cancelledAmount, cancelledBy, cancelledFromStatus }, modifications: { orders, rate, duringPreparation, total }, refunds: { pending, completed (con avgHours), rejected }, cases: [{ reason, open, resolved, avgResolutionMinutes }] }` | Agente v3: cancelaciones, reembolsos, derivaciones y modificaciones, en SQL y en la zona del negocio |
 | GET | `/dashboard/search` | M | `?q=` (≥ 2 caracteres) | `{ data: [{ id, group, title, detail, href, rank }] }` | RPC `search_dashboard` |
 
 **Services:**
@@ -375,9 +422,9 @@ ManualSaleInput = {
 | GET | `/whatsapp/integration` | A | — | `{ provider, isActive, phoneNumber, connectedAt }` (sin tokens) | `whatsapp_integrations.select` |
 | POST | `/whatsapp/connect/start` | A | `{ redirectUrl, onboarding?: "business_app" \| "api" }` | `{ authUrl, state, profileId }` | Edge `zernio-whatsapp-start` |
 | POST | `/whatsapp/connect/complete` | A | `{ profileId, accountId, username?, rawQuery? }` | `{ success: true, integration }` | Edge `zernio-whatsapp-complete` |
-| GET | `/conversations` | M | `?status=open\|handoff\|closed&page=` | Conversaciones con cliente, orden por `lastMessageAt` | `ConversationsPage` |
-| GET | `/conversations/:id/messages` | M | `?before=&limit=50` | `{ data: messages, lastOrder: { orderCode, status, total } \| null }` | `whatsapp_messages.select` + `orders` por teléfono |
-| PATCH | `/conversations/:id/status` | M | `{ status: "open" \| "handoff" \| "closed" }` | Conversación | Botón Tomar/Devolver (`whatsapp_conversations.update`) |
+| GET | `/conversations` | M | `?status=open\|handoff\|closed&reason=&page=` | Conversaciones con cliente y `currentCase` (motivo, resumen, pedido y reembolsos), orden por `lastMessageAt`. `reason` filtra por motivo de derivación | `ConversationsPage` |
+| GET | `/conversations/:id/messages` | M | `?before=&limit=50` | `{ data: messages, lastOrder: { orderCode, status, total } \| null, currentCase }` | `whatsapp_messages.select` + `orders` por teléfono |
+| PATCH | `/conversations/:id/status` | M | `{ status: "open" \| "handoff" \| "closed" }` | Conversación | Botón Tomar/Devolver (`whatsapp_conversations.update`). Agente v3: pasar a `open` resuelve el caso abierto y limpia `currentCaseId` |
 
 **Services:**
 
@@ -448,21 +495,27 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; devuelve `{ duplicate: false, id, createdAt }`, o `{ duplicate: true }` si `providerMessageId` ya existe | `rest/v1/whatsapp_messages` |
 | GET | `/agent/conversations/:id` | `?businessId=` | `{ id, contactId, phone, status, handoffReason, lastMessageAt }`. El workflow lo relee antes de enviar: si una persona tomó la conversación, el bot se calla | `rest/v1/whatsapp_conversations?select=status` |
 | GET | `/agent/conversations/:id/messages` | `?businessId=&after=&direction=&limit=50` | `{ data, count }`. Con `after` + `direction=inbound` responde "¿el cliente siguió escribiendo mientras esperábamos la ráfaga?" | `rest/v1/whatsapp_messages?created_at=gt.` |
-| GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | `agent_context` | `rpc/agent_context` |
-| GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` | `rpc/agent_search_products` |
-| GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail` | `rpc/agent_product_detail` |
-| GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` | `rpc/agent_search_faq` |
-| GET | `/agent/orders/status` | `?businessId=&conversationId=&orderCode=` | `agent_order_status` | `rpc/agent_order_status` |
+| GET | `/agent/conversations/:id/context` | `?businessId=&k=20` | Primero descarta el borrador si pasaron 4 h sin cambios. Después `agent_context`, más (v3): `clock` (hora local, `is_open`, `closes_at`, `next_open: { at, label }`), `menu` (carta con ids cortos y opciones; `mode: full` hasta 50 productos, `summary` con más), `bot.bot_name` (Sofi por defecto) y `bot.tone_label`, `active_order.status_label` y `eta`, `business.menu_url` y `active_order.track_url` armados con `FRONT_URL` | `rpc/agent_context` |
+| GET | `/agent/products/search` | `?businessId=&q=&limit=` | `agent_search_products` (v3: por palabras, sin acentos, tolera plurales y errores de tipeo) | `rpc/agent_search_products` |
+| GET | `/agent/products/:id` | `?businessId=` | `agent_product_detail`. `:id` es el UUID o el id corto de la carta | `rpc/agent_product_detail` |
+| GET | `/agent/faq/search` | `?businessId=&q=&limit=` | `agent_search_faq` (v3: por palabras) | `rpc/agent_search_faq` |
+| GET | `/agent/orders/status` | `?businessId=&conversationId=&orderCode=` | `agent_order_status`, más (v3) `status_label`, `editable` (`pending`, `confirmed`, `preparing`), `cancelable` (`pending`), `track_url` y el `id` de cada item | `rpc/agent_order_status` |
 | GET | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_get` | `rpc/agent_draft_get` |
-| POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` | `agent_draft_add_item` | `rpc/agent_draft_add_item` |
+| POST | `/agent/draft/items` | `{ businessId, conversationId, productId, quantity, optionValueIds?, notes? }` o, en v3, `{ businessId, conversationId, items: [{ productId, quantity, optionValueIds?, notes? }] }` (hasta 20; también como texto JSON) | `agent_draft_add_item` por item. `productId` y `optionValueIds` aceptan UUID o id corto. Con `items` devuelve `{ ok, resultados: [{ producto, cantidad, ok, error? }], pedido }`: un item que falla no frena al resto | `rpc/agent_draft_add_item` |
+| PATCH | `/agent/draft/items/:itemId` | `{ businessId, conversationId, quantity }` (0 a 50) | v3: cambia la cantidad validando stock del producto y de las opciones; 0 saca el item. Devuelve `{ ok, pedido }` | — |
 | DELETE | `/agent/draft/items/:itemId` | `?businessId=&conversationId=` | `agent_draft_remove_item` | `rpc/agent_draft_remove_item` |
-| PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` | `rpc/agent_draft_set_details` |
+| PATCH | `/agent/draft` | `{ businessId, conversationId, customerName?, orderType?, deliveryAddress?, paymentMethod?, notes? }` | `agent_draft_set_details` (v3: pasar a `takeaway` borra la dirección) | `rpc/agent_draft_set_details` |
 | DELETE | `/agent/draft` | `?businessId=&conversationId=` | `agent_draft_cancel` | — |
-| POST | `/agent/draft/confirm` | `{ businessId, conversationId }` | `agent.confirmDraft` | `functions/v1/create-order` (modo whatsapp) |
-| PATCH | `/agent/orders` | `{ businessId, conversationId, orderCode?, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` |
-| POST | `/agent/orders/items` | `{ businessId, conversationId, orderCode? }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` |
-| POST | `/agent/conversations/:id/handoff` | `{ businessId, reason }` | `agent_conversation_handoff` | `rpc/agent_conversation_handoff` |
-| POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl, mediaType, orderCode?, providerMessageId? }` | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+| POST | `/agent/draft/confirm` | `{ businessId, conversationId }` | `agent.confirmDraft`. v3: con el local cerrado por horario **toma el pedido** (queda `pending` con una nota en el historial) si abre en los próximos 7 días; cerrado a mano o sin horarios, `{ ok: false, error }`. La respuesta suma `para_la_apertura`, `abre`, `eta` (desde la apertura si está cerrado), `track_url` y `transferencia` si paga por transferencia | `functions/v1/create-order` (modo whatsapp) |
+| PATCH | `/agent/orders` | `{ businessId, conversationId, orderCode?, orderType?, deliveryAddress?, paymentMethod? }` | `agent_order_update_details` | `rpc/agent_order_update_details` (v2; el workflow v3 usa `/agent/orders/modify`. Se borra después del corte, B14) |
+| POST | `/agent/orders/items` | `{ businessId, conversationId, orderCode? }` | `agent_order_add_draft_items` | `rpc/agent_order_add_draft_items` (v2; ídem) |
+| POST | `/agent/orders/modify` | `{ businessId, conversationId, orderCode?, add?: [{ productId, quantity, optionValueIds?, notes? }], remove?: [orderItemId], quantities?: [{ itemId, quantity }], orderType?, deliveryAddress?, paymentMethod? }` (las listas también como texto JSON) | v3 `orders.modifyOrder`: en `pending`, `confirmed` o `preparing`. Valida todo antes de escribir; los productos nuevos pasan por `pricing.priceItems`. Devuelve stock de lo que se saca o baja, descuenta lo que se suma, recalcula envío, cupón (si deja de cumplir el mínimo se quita) y total, y registra `order_modifications` y el resumen en `orders`. Pagado: `saldo_pendiente` (pago pendiente nuevo) o `reembolso` (reembolso pendiente). Si no se puede: `{ ok: false, derivar: true, error }` | — |
+| POST | `/agent/orders/cancel` | `{ businessId, conversationId, orderCode?, reason? }` | v3 `orders.cancelOrder`: solo `pending`. Devuelve stock, uso del cupón y puntos; `cancelled_by = customer_whatsapp`. Pagado: `reembolso: true, monto_reembolso` y un `order_refunds` pendiente. Idempotente (`yaEstaba`) | — |
+| PATCH | `/agent/refunds/current` | `{ businessId, conversationId, orderCode?, alias?, cbuCvu?, holder? }` (alias o CBU obligatorio) | v3: guarda a dónde devolver en el último reembolso pendiente de la conversación | — |
+| POST | `/agent/conversations/:id/handoff` | `{ businessId, reason, orderCode?, summary? }` | v3 `orders.handoff`: crea un `conversation_cases` con motivo, pedido y resumen, le ata el reembolso pendiente de ese pedido y pasa la conversación a `handoff` con `current_case_id`. Con `handoff_enabled = false` no deriva. Devuelve `{ ok, motivo, caso_id, pedido, hay_alguien }` | `rpc/agent_conversation_handoff` |
+| POST | `/agent/payment-proofs` | `{ businessId, conversationId, mediaUrl?, mediaType, orderCode?, providerMessageId? }` (v3: sin `mediaUrl` usa la última imagen o PDF del cliente de los últimos 10 min) | Descarga de Zernio → R2 privado → `order_payment_proofs` | `storage/v1/object/payment-proofs` + `rest/v1/order_payment_proofs` |
+
+**Ids cortos (v3).** La carta del contexto identifica cada producto y valor de opción con los primeros 6 caracteres de su UUID (8 si 6 chocan con otro id del negocio; el UUID completo si también chocan con 8). Las rutas que reciben un producto u opción aceptan el corto o el UUID y lo resuelven **dentro del negocio**: un id de otro negocio no se encuentra, y uno ambiguo vuelve como `{ ok: false, error }` legible.
 
 `orderCode` va en el **cuerpo** y es opcional en las dos rutas de pedido confirmado: sin código, la función SQL resuelve el último pedido editable del contacto, que es el caso más común ("cambiame la dirección"). Con el código en la URL no había forma de expresarlo.
 
@@ -483,7 +536,23 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 
 ---
 
-## 15. Resumen de rutas
+## 15. `cases` y `refunds` (agente v3, V3b)
+
+Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (RLS de 0010): los miembros leen casos y reembolsos; resolver un caso es de cualquier miembro, devolver o rechazar un reembolso es de owner y admin (**A**).
+
+| Método | Ruta | Auth | Body / Query | Respuesta |
+| --- | --- | --- | --- | --- |
+| POST | `/cases/:id/resolve` | M | `{ note? }` | `{ id, status: "resolved", resolvedAt, resolutionNote }`. 409 si ya estaba resuelto |
+| GET | `/refunds` | M | `?status=pending\|completed\|rejected&page=&limit=` | `{ data: [{ id, amount, reason, status, originalPaymentMethod, destination, requestedAt, completedAt, notes, proofUrl, order, case, conversationId }], meta }` (`proofUrl` firmada por 10 min) |
+| POST | `/refunds/:id/proof-upload` | A | `{ contentType }` (JPG, PNG, WebP o PDF) | `{ uploadUrl, method, headers, key, expiresIn }`: PUT directo al bucket **privado** en `<negocio>/refund-proofs/<reembolso>/` |
+| POST | `/refunds/:id/complete` | A | `{ proofKey?, notes? }` | Reembolso `completed`. La key tiene que ser la que firmó `proof-upload` para ese reembolso. Si era por cancelación, el pedido y sus pagos pasan a `refunded`. 409 si ya se cerró |
+| POST | `/refunds/:id/reject` | A | `{ notes }` (obligatorio) | Reembolso `rejected` |
+
+**Pedidos (§9), cambios de v3:** `GET /orders` y `GET /orders/:id` suman `modification: { count, lastAt, lastDuring, seen }`, `cancellation: { at, by, reason } | null` y `refunds`. `GET /orders/:id` suma `modifications` (el detalle de cada cambio). Cancelar desde el panel usa `register_order_cancellation` (0011): devuelve stock, cupón y puntos y, si estaba pagado, deja un reembolso pendiente.
+
+---
+
+## 16. Resumen de rutas
 
 | Módulo | Rutas |
 | --- | --- |
@@ -491,14 +560,16 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | auth | 9 |
 | account | 2 |
 | businesses | 10 |
-| settings | 10 |
+| settings | 13 |
 | coupons | 4 |
 | catalog | 16 (15 + reorder) |
 | uploads | 1 |
-| orders | 9 |
+| orders | 10 |
 | customers | 2 |
-| dashboard | 2 |
+| dashboard | 3 |
 | whatsapp | 6 |
-| agent | 20 |
+| agent | 24 |
 | public | 5 |
-| **Total** | **97** |
+| cases | 1 |
+| refunds | 4 |
+| **Total** | **111** |

@@ -14,6 +14,19 @@ export const idParam = z.object({ id: uuid() });
 
 export const itemIdParam = z.object({ itemId: uuid() });
 
+/**
+ * Producto o valor de opción: el UUID completo o el id corto de la carta del
+ * contexto (6 u 8 caracteres). El service lo resuelve dentro del negocio.
+ */
+const catalogRef = (message: string) =>
+  z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[0-9a-f][0-9a-f-]{3,35}$/, message);
+
+export const productRefParam = z.object({ id: catalogRef("El producto no existe.") });
+
 export const upsertConversationSchema = z.object({
   businessId,
   contactId: z.string().trim().min(1, "Falta el contacto.").max(160),
@@ -55,13 +68,39 @@ export const orderStatusQuery = z.object({
   orderCode: z.string().trim().max(20).optional()
 });
 
-export const draftAddItemSchema = z.object({
+const draftItem = z.object({
+  productId: catalogRef("El producto no existe."),
+  quantity: z.coerce.number().int().min(1).max(50).default(1),
+  optionValueIds: z.array(catalogRef("Alguna de las opciones elegidas no existe.")).max(30).default([]),
+  notes: z.string().trim().max(300).nullable().optional()
+});
+
+export const draftAddItemSchema = draftItem.extend({ businessId, conversationId });
+
+/**
+ * Varios items en una llamada (v3). n8n a veces manda el array del modelo como
+ * texto JSON: se acepta las dos formas.
+ */
+export const draftAddItemsSchema = z.object({
   businessId,
   conversationId,
-  productId: uuid("El producto no existe."),
-  quantity: z.coerce.number().int().min(1).max(50).default(1),
-  optionValueIds: z.array(uuid()).max(30).default([]),
-  notes: z.string().trim().max(300).nullable().optional()
+  items: z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    },
+    z.array(draftItem).min(1, "No hay productos para agregar.").max(20)
+  )
+});
+
+export const draftItemQuantitySchema = z.object({
+  businessId,
+  conversationId,
+  quantity: z.coerce.number().int().min(0).max(50)
 });
 
 export const draftDetailsSchema = z.object({
@@ -98,13 +137,63 @@ export const addDraftItemsSchema = z.object({
 
 export const handoffSchema = z.object({
   businessId,
-  reason: z.string().trim().max(120).nullable().optional()
+  reason: z.string().trim().max(120).nullable().optional(),
+  // v3: el pedido del que se trata (si lo hay) y una línea para el local.
+  orderCode: z.string().trim().max(20).nullable().optional(),
+  summary: z.string().trim().max(500).nullable().optional()
 });
+
+/** Lista que puede venir como texto JSON desde n8n. */
+const jsonList = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") return [];
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }, z.array(schema).max(20));
+
+/** v3: cambios sobre un pedido hecho, todos en una llamada. */
+export const modifyOrderSchema = z.object({
+  businessId,
+  conversationId,
+  orderCode: z.string().trim().max(20).nullable().optional(),
+  add: jsonList(draftItem).default([]),
+  remove: jsonList(uuid("Ese producto ya no está en el pedido.")).default([]),
+  quantities: jsonList(
+    z.object({ itemId: uuid("Ese producto ya no está en el pedido."), quantity: z.coerce.number().int().min(0).max(50) })
+  ).default([]),
+  orderType: z.enum(["delivery", "takeaway"]).nullable().optional(),
+  deliveryAddress: z.string().trim().max(300).nullable().optional(),
+  paymentMethod: z.enum(["cash", "transfer", "mercadopago"]).nullable().optional()
+});
+
+export const cancelOrderSchema = z.object({
+  businessId,
+  conversationId,
+  orderCode: z.string().trim().max(20).nullable().optional(),
+  reason: z.string().trim().max(300).nullable().optional()
+});
+
+export const refundDestinationSchema = z
+  .object({
+    businessId,
+    conversationId,
+    orderCode: z.string().trim().max(20).nullable().optional(),
+    alias: z.string().trim().max(60).nullable().optional(),
+    cbuCvu: z.string().trim().max(40).nullable().optional(),
+    holder: z.string().trim().max(120).nullable().optional()
+  })
+  .refine((v) => Boolean(v.alias || v.cbuCvu), { message: "Falta el alias o el CBU/CVU.", path: ["alias"] });
 
 export const paymentProofSchema = z.object({
   businessId,
   conversationId,
-  mediaUrl: z.string().url("La URL del adjunto no es válida."),
+  // v3: opcional. Sin URL se usa la última imagen o PDF que mandó el cliente
+  // (el comprobante puede llegar en una ráfaga y no en este mensaje).
+  mediaUrl: z.string().url("La URL del adjunto no es válida.").nullable().optional(),
   mediaType: z.string().trim().max(40).default("image"),
   orderCode: z.string().trim().max(20).nullable().optional(),
   providerMessageId: z.string().trim().max(200).nullable().optional()
@@ -113,6 +202,11 @@ export const paymentProofSchema = z.object({
 export type UpsertConversationInput = z.infer<typeof upsertConversationSchema>;
 export type LogMessageInput = z.infer<typeof logMessageSchema>;
 export type DraftAddItemInput = z.infer<typeof draftAddItemSchema>;
+export type DraftAddItemsInput = z.infer<typeof draftAddItemsSchema>;
 export type DraftDetailsInput = z.infer<typeof draftDetailsSchema>;
 export type OrderDetailsInput = z.infer<typeof orderDetailsSchema>;
 export type PaymentProofInput = z.infer<typeof paymentProofSchema>;
+export type ModifyOrderInput = z.infer<typeof modifyOrderSchema>;
+export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+export type HandoffInput = z.infer<typeof handoffSchema>;
+export type RefundDestinationInput = z.infer<typeof refundDestinationSchema>;

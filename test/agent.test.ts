@@ -4,6 +4,7 @@
 import request from "supertest";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
+import { config } from "../src/config.js";
 import { disconnectDb } from "../src/lib/db.js";
 import { DB_AVAILABLE, ownerDb, seedShop, TEST_AGENT_KEY } from "./helpers.js";
 
@@ -219,14 +220,24 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       expect(res.body).toBeTypeOf("object");
     });
 
+    it("el contexto trae el link del menú público", async () => {
+      // Sin esto el agente no puede pasar el menú digital y termina leyendo los
+      // productos de a uno, que es lo que pasaba en producción.
+      const res = await request(app)
+        .get(`/v1/agent/conversations/${conversationId}/context?businessId=${s.businessId}`)
+        .set(key)
+        .expect(200);
+      expect(res.body.business.menu_url).toBe(`${config.FRONT_URL}/${res.body.business.slug}`);
+    });
+
     it("con el businessId de otro negocio no devuelve la conversación", async () => {
       const otro = await seedShop("agente-otro");
       const res = await request(app)
         .get(`/v1/agent/conversations/${conversationId}/context?businessId=${otro.businessId}`)
         .set(key)
-        .expect(200);
-      // Devuelve el contexto del negocio pedido, pero la conversación (que es de
-      // otro) no aparece: las funciones filtran por (conversación, negocio).
+        .expect(404);
+      expect(res.body.error.code).toBe("NOT_FOUND");
+      expect(res.body.agent_prompt).toBeUndefined();
       expect(JSON.stringify(res.body)).not.toContain(conversationId);
       expect(JSON.stringify(res.body)).not.toContain("3815557777");
     });
@@ -366,12 +377,14 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       expect(sinDireccion.body.error).toMatch(/dirección/i);
     });
 
-    it("no confirma con el local cerrado", async () => {
+    it("no confirma si el local lo cerraron a mano desde el panel", async () => {
+      // Cerrado por horario sí toma el pedido (agente v3, test/agent-v3.test.ts);
+      // cerrado a mano no, porque no hay fecha de apertura.
       await armarBorradorCompleto();
       await ownerDb().business.update({ where: { id: s.businessId }, data: { manualStatus: "closed" } });
       const res = await request(app).post("/v1/agent/draft/confirm").set(key).send(draft()).expect(200);
       expect(res.body).toMatchObject({ ok: false });
-      expect(res.body.error).toMatch(/cerrado/i);
+      expect(res.body.error).toMatch(/no está tomando pedidos/i);
     });
 
     it("no confirma sin stock y lo explica", async () => {
@@ -486,7 +499,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .post("/v1/agent/payment-proofs")
         .set(key)
-        .send({ ...draft(), mediaUrl: "https://zernio.com/media/1.jpg", mediaType: "image" })
+        .send({ ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/1", mediaType: "image" })
         .expect(200);
 
       expect(res.body).toMatchObject({ ok: true, duplicate: false, orderCode: order.orderCode });
@@ -498,7 +511,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
     it("el mismo mensaje no guarda dos comprobantes", async () => {
       await pedidoConfirmado();
       mockDownload();
-      const body = { ...draft(), mediaUrl: "https://zernio.com/media/1.jpg", providerMessageId: "msg-9" };
+      const body = { ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/1", providerMessageId: "msg-9" };
 
       await request(app).post("/v1/agent/payment-proofs").set(key).send(body).expect(200);
       const repetido = await request(app).post("/v1/agent/payment-proofs").set(key).send(body).expect(200);
@@ -512,7 +525,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .post("/v1/agent/payment-proofs")
         .set(key)
-        .send({ ...draft(), mediaUrl: "https://zernio.com/media/1.jpg" })
+        .send({ ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/1" })
         .expect(200);
       expect(res.body).toMatchObject({ ok: false });
       expect(res.body.error).toMatch(/pedido/i);
@@ -525,7 +538,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
       const res = await request(app)
         .post("/v1/agent/payment-proofs")
         .set(key)
-        .send({ ...draft(), mediaUrl: "https://zernio.com/media/1.html" })
+        .send({ ...draft(), mediaUrl: "https://zernio.com/api/v1/whatsapp/media/2" })
         .expect(200);
       expect(res.body).toMatchObject({ ok: false });
       expect(res.body.error).toMatch(/imagen|PDF/i);

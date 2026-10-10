@@ -65,7 +65,7 @@ describe.runIf(DB_AVAILABLE)("settings, cupones y uploads", () => {
   describe("bot y FAQs", () => {
     it("lee y edita la configuración del bot", async () => {
       const get = await request(app).get("/v1/settings/bot").set(bearer(t.staff));
-      expect(get.body).toMatchObject({ isEnabled: true, botName: "Toki" });
+      expect(get.body).toMatchObject({ isEnabled: true, botName: "Sofi" });
       const patch = await request(app).patch("/v1/settings/bot").set(bearer(t.admin)).send({ isEnabled: false, botName: "Tito" });
       expect(patch.body).toMatchObject({ isEnabled: false, botName: "Tito", handoffEnabled: true });
       expect((await request(app).patch("/v1/settings/bot").set(bearer(t.admin)).send({})).status).toBe(400);

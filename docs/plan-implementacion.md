@@ -97,6 +97,47 @@
 - **Dos correcciones de diseño:** `orderCode` pasa al cuerpo y es opcional (sin código, el último pedido editable del contacto), y `paymentMethod` vuelve a aceptar `mercadopago`.
 - **El comprobante de pago pasa de 4 nodos a 1.** 237 tests en verde. Detalle en `docs/fases/fase8.md`.
 
+**F9 terminada (2026-09-22).** El agente entiende audios e imágenes, y sabe pasar el menú.
+
+- **El link del menú digital** (`FRONT_URL` + slug) y el de seguimiento entran al contexto del turno. Ante "pasame el menú" el agente manda el link en vez de leer los productos de a uno.
+- **Los adjuntos ya no desvían el flujo: lo enriquecen.** Audio → Whisper, imagen → visión con salida JSON clasificada, y el texto resultante se concatena al mensaje. El agente corre siempre.
+- **La decisión de qué es un comprobante pasó del workflow al agente**, con la tool `guardar_comprobante`. Guardar un comprobante sigue sin significar que el pago esté acreditado.
+- **Defensa contra inyección por imagen** en el prompt de visión. Detalle en `docs/fases/fase9.md`.
+
+**Agente v3 — V1 terminada (2026-09-25).** Plan completo en `toki-agents/docs/12-plan-agente-v3.md`.
+
+- **Contexto nuevo** (`GET /agent/conversations/:id/context`): hora local del negocio y si está abierto, hasta cuándo o cuándo abre; la carta completa con ids cortos y opciones (hasta 50 productos, después un resumen); nombre (Sofi) y tono del bot; estado legible y hora estimada del pedido activo.
+- **Ids cortos** en `/products/:id` y `/draft/items`, resueltos dentro del negocio.
+- **Búsqueda por palabras** en productos y FAQs: sin acentos, con plurales y errores de tipeo.
+- **El borrador vence a las 4 h sin cambios**; un trigger nuevo cuenta agregar o sacar un item como cambio.
+- **Migración `0008`.** 272 tests en verde (36 nuevos en `test/agent-v3.test.ts`); los 2 de comprobantes fallan solo en el sandbox porque no hay red hacia R2.
+
+**Agente v3 — V2 terminada (2026-09-25).**
+
+- **Varios productos en una llamada** (`POST /agent/draft/items` con `items`): un pedido directo se carga de una vez y cada producto que falla se explica sin frenar al resto.
+- **Cambiar cantidades** (`PATCH /agent/draft/items/:itemId`), con control de stock de productos y opciones; 0 saca el item.
+- **Pasar a retiro borra la dirección** (migración `0009`).
+- **Pedidos con el local cerrado:** se confirman y quedan para la apertura, con la hora estimada calculada desde ahí. Cerrado a mano desde el panel sigue sin tomar pedidos.
+- **Confirmar devuelve** hora estimada, link de seguimiento y datos de transferencia. 284 tests en verde (12 nuevos).
+
+**Agente v3 — V3 terminada (2026-09-25).**
+
+- **Modificar un pedido hecho** en una llamada (`POST /agent/orders/modify`) mientras esté en `pending`, `confirmed` o `preparing`: sumar, sacar, cantidades, entrega, dirección y pago. Todo se valida antes de escribir. Queda registrado en `order_modifications` y en el resumen de `orders` (para destacarlo en el panel, V3b).
+- **Cancelar** (`POST /agent/orders/cancel`) solo en `pending`: devuelve stock, cupón y puntos.
+- **Stock de opciones devolvible:** `order_item_options.option_value_id` y `restock_order_items`, usada también al cancelar desde el panel. Un pedido cancelado ya no se puede reactivar.
+- **Casos y reembolsos:** cada derivación crea un `conversation_cases` con motivo, pedido y resumen; un pedido pagado que se cancela o baja de total deja un `order_refunds` pendiente con los datos de destino.
+- **Comprobante en ráfaga:** sin `mediaUrl`, se usa el último adjunto del cliente.
+- **Migración `0010`.** 314 tests en verde (30 nuevos en `test/agent-v3-pedidos.test.ts`).
+
+**Agente v3 — V3b terminada (2026-09-25).** El panel ve lo que hace el agente.
+
+- **Pedidos modificados:** `modification` en cada pedido para destacarlo en el tablero hasta que el local abre el detalle (`POST /orders/:id/modification-seen`), y `modifications` con el detalle de cada cambio.
+- **Cancelar desde el panel** usa `register_order_cancellation` (migración `0011`), la misma función que el agente: stock, cupón, puntos, quién canceló y reembolso si estaba pagado.
+- **Casos y reembolsos** en la bandeja (`currentCase`, filtro por motivo) y rutas nuevas `/cases` y `/refunds` (comprobante de la devolución en el bucket privado; devolver o rechazar es de owner y admin).
+- **Métricas** en `GET /dashboard/operations`.
+- **Front (`toki`, rama `agente-v3`):** tarjeta destacada y detalle de cambios en Pedidos, caso y reembolso con acciones en Conversaciones, bloque "Después del pedido" en el Dashboard.
+- 326 tests en verde (12 nuevos en `test/panel-v3b.test.ts`). Front: `tsc -b`, `eslint` (sin errores nuevos) y `vite build` OK; probado de punta a punta con datos de demo en el navegador.
+
 **Todas las fases terminadas.** Lo que queda es ejecución: deploy (F5), corrida de la migración (F7) y el corte.
 
 ## Orden y dependencias
@@ -125,3 +166,8 @@ F7 al final, con todo lo anterior verificado
 | Cookies o sesión en Safari | Resuelto por diseño: Bearer + refresh en el cliente |
 | El VPS compartido con Lamelas se queda corto de recursos | Monitorear RAM y CPU en Dokploy; separar VPS si hace falta. Postgres de Toki con `shared_buffers` moderado |
 | Emails a spam | SPF, DKIM y DMARC del dominio en Resend antes de F1 en producción |
+
+
+## Agente nativo por negocio — 2026-10-08
+
+Configuración, preview aislado, herramientas operativas, webhook firmado de Zernio, cola PostgreSQL, presupuesto por negocio, confirmaciones con importes verificados, bandeja de salida, adjuntos/comprobantes, derivación humana y panel de revisión implementados. Migraciones 0013–0016. Pruebas locales con base aislada y proveedores simulados. El 10/10 se verificó OpenAI directo con catálogo, memoria, herramientas nativas y transcripción real; pendiente el piloto completo WhatsApp/Zernio/R2 y el despliegue. Procedimiento: [agente-nativo.md](agente-nativo.md).

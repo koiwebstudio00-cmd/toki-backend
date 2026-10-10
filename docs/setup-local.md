@@ -1,8 +1,14 @@
-# Levantar Toki API en tu compu
+# Levantar Toki en tu compu
 
-Guía para arrancar el backend con la base de datos local. Tarda unos 15 minutos.
+Guía para arrancar el proyecto completo en una máquina nueva: la API con su base de datos local y el front. Tarda unos 20 minutos.
 
-**Necesitás:** Node 22 o superior, PostgreSQL 17 y Git. No hace falta Docker ni Supabase.
+**Necesitás:** Node 22 o superior, PostgreSQL 17, Git y acceso a los repos privados de `koiwebstudio00-cmd` en GitHub. No hace falta Docker ni Supabase.
+
+| Repo en GitHub | Carpeta local | Qué es |
+| --- | --- | --- |
+| `toki-backend` | `toki-api` | API (Express + Prisma + PostgreSQL) |
+| `toki` | `toki` | Front (React + Vite): panel del negocio y menú público |
+| `toki-agents` | `toki-agents` | Workflows de n8n, prompts y pruebas del agente de WhatsApp |
 
 ---
 
@@ -38,19 +44,28 @@ psql --version     # PostgreSQL 17.x
 whoami             # tu usuario: lo vas a usar en el .env
 ```
 
-## 2. Clonar e instalar
+## 2. Clonar los repos
+
+Los tres van dentro de una misma carpeta:
 
 ```bash
+mkdir toki-platform && cd toki-platform
 git clone https://github.com/koiwebstudio00-cmd/toki-backend.git toki-api
-cd toki-api
-npm install
+git clone https://github.com/koiwebstudio00-cmd/toki.git
+git clone https://github.com/koiwebstudio00-cmd/toki-agents.git
 ```
 
-`npm install` corre `prisma generate` solo: crea el cliente de base de datos tipado a partir de `prisma/schema.prisma`.
+**Rama de trabajo (octubre de 2026): `agente-v3`** en los tres. Cuando se mergee a `main`, este paso sobra:
+
+```bash
+for d in toki-api toki toki-agents; do (cd $d && git checkout agente-v3); done
+```
+
+Para solo levantar la API y el front, `toki-agents` no hace falta.
 
 ## 3. Crear las dos bases
 
-Una para desarrollo y otra para los tests (los tests **borran y recrean** la suya en cada corrida).
+Una para desarrollo y otra para los tests (los tests **borran y recrean** la suya en cada preparación).
 
 ```bash
 createdb toki
@@ -59,16 +74,19 @@ createdb toki_test
 
 En Windows, si `createdb` pide usuario: `createdb -U postgres toki`.
 
-## 4. Configurar el `.env`
+## 4. Configurar la API
 
 ```bash
+cd toki-api
+npm install
 cp .env.example .env
 ```
 
-Abrilo y dejá estas tres líneas con **tu usuario** (reemplazá `dev0`):
+`npm install` corre `prisma generate` solo: crea el cliente de base de datos tipado a partir de `prisma/schema.prisma`.
+
+Abrí el `.env` y dejá estas dos líneas con **tu usuario** (reemplazá `dev0`):
 
 ```env
-DATABASE_URL=postgresql://toki_app:toki_app_dev@localhost:5432/toki
 DATABASE_URL_MIGRATE=postgresql://dev0@localhost:5432/toki
 DATABASE_URL_TEST=postgresql://dev0@localhost:5432/toki_test
 ```
@@ -85,12 +103,14 @@ DATABASE_URL_TEST=postgresql://postgres:TU_PASSWORD@localhost:5432/toki_test
 - **`DATABASE_URL_MIGRATE`** es el dueño de la base y solo se usa para aplicar migraciones.
 - **`DATABASE_URL`** es `toki_app`, el usuario con el que corre la API. No tiene permisos propios: cada consulta adopta un rol (`anon`, `authenticated` o `service_role`) y las reglas de acceso de Postgres deciden qué ve. Es lo mismo que pasa en producción, así que los errores de permisos aparecen en tu compu y no después.
 
-El resto de las variables (Resend, R2, Zernio) podés dejarlas vacías: los emails se imprimen en la consola y las subidas de imágenes devuelven URLs de mentira.
+`CORS_ORIGIN` y `FRONT_URL` ya vienen apuntando al front local (`http://localhost:5173`). El resto de las variables (Resend, R2, Zernio) podés dejarlas vacías: los emails se imprimen en la consola y las subidas de imágenes devuelven URLs de mentira.
+
+Los `.env` no viajan con Git. Si necesitás las credenciales reales de otra máquina, copiá el archivo a mano.
 
 ## 5. Migrar y cargar datos de prueba
 
 ```bash
-npm run db:migrate:deploy   # crea el usuario toki_app y aplica las 3 migraciones
+npm run db:migrate:deploy   # crea el usuario toki_app y aplica todas las migraciones
 npm run seed                # 2 negocios de ejemplo
 ```
 
@@ -102,7 +122,7 @@ El seed crea dos cuentas, las dos con la contraseña `toki12345`:
 ## 6. Levantar la API
 
 ```bash
-npm run dev
+npm run dev                 # http://localhost:3000
 ```
 
 Probala:
@@ -123,9 +143,46 @@ curl localhost:3000/v1/business -H "authorization: Bearer $TOKEN"
 curl localhost:3000/v1/products -H "authorization: Bearer $TOKEN"
 ```
 
-## 7. Correr los tests
+## 7. Levantar el front
+
+En otra terminal, con la API corriendo:
 
 ```bash
+cd toki-platform/toki
+npm install
+cp .env.example .env
+```
+
+En ese `.env` dejá:
+
+```env
+VITE_API_URL=http://localhost:3000
+```
+
+**Sin `VITE_API_URL` el front arranca en modo demo**, con datos falsos y sin hablar con la API. Las demás variables del ejemplo son de versiones anteriores y el código ya no las lee.
+
+```bash
+npm run dev                 # http://localhost:5173
+```
+
+Para entrar:
+
+| Qué | URL | Con qué |
+| --- | --- | --- |
+| Panel del negocio | `http://localhost:5173/login` | `owner@burger.test` / `toki12345` |
+| Menú público | `http://localhost:5173/toki-demo` | — |
+| Menú público del segundo negocio | `http://localhost:5173/pizzeria-demo` | — |
+
+Antes de dar por terminada una tarea en el front:
+
+```bash
+npm run lint && npm run build
+```
+
+## 8. Correr los tests de la API
+
+```bash
+cd toki-platform/toki-api
 npm run test:prepare   # recrea toki_test desde cero
 npm test
 ```
@@ -138,19 +195,39 @@ Antes de dar por terminada una tarea:
 npm run lint && npm run typecheck && npm run build && npm test
 ```
 
+Las pruebas del agente están en `toki-agents/tests` (ver su `README.md`).
+
 ---
+
+## Qué no funciona en local
+
+| Qué | Por qué | Cómo se prueba |
+| --- | --- | --- |
+| WhatsApp y el agente | Zernio necesita una URL pública para mandar el webhook, y `ZERNIO_API_KEY` | Con los tests de la API y las pruebas de `toki-agents` |
+| Imágenes y comprobantes reales | Necesitan las credenciales de R2 en el `.env` | Sin credenciales, la subida devuelve una URL de mentira |
+| Emails reales | Necesitan los datos de Resend en el `.env` | Sin ellos, el email se imprime en la consola de la API |
 
 ## Comandos del día a día
 
-| Comando | Para qué |
-| --- | --- |
-| `npm run dev` | API con recarga automática |
-| `npm test` / `npm run test:watch` | Tests |
-| `npm run test:prepare` | Recrear la base de tests |
-| `npm run db:migrate:deploy` | Aplicar migraciones nuevas a tu base local |
-| `npm run db:migrate:create -- --name mi_cambio` | Crear una migración (**revisá el SQL antes de aplicarla**) |
-| `npm run seed` | Recargar los negocios de ejemplo (no pisa lo que ya existe) |
-| `npx prisma studio` | Ver la base en el navegador |
+| Comando | Dónde | Para qué |
+| --- | --- | --- |
+| `npm run dev` | `toki-api` | API con recarga automática |
+| `npm run dev` | `toki` | Front con recarga automática |
+| `npm test` / `npm run test:watch` | `toki-api` | Tests |
+| `npm run test:prepare` | `toki-api` | Recrear la base de tests |
+| `npm run db:migrate:deploy` | `toki-api` | Aplicar migraciones nuevas a tu base local |
+| `npm run db:migrate:create -- --name mi_cambio` | `toki-api` | Crear una migración (**revisá el SQL antes de aplicarla**) |
+| `npm run seed` | `toki-api` | Recargar los negocios de ejemplo (no pisa lo que ya existe) |
+| `npx prisma studio` | `toki-api` | Ver la base en el navegador |
+
+## Después de traer cambios
+
+```bash
+git pull
+npm install                 # si cambió package.json
+npm run db:migrate:deploy   # en toki-api, si hay migraciones nuevas
+npm run test:prepare        # en toki-api, antes de volver a correr los tests
+```
 
 ## Empezar de cero
 
@@ -169,12 +246,14 @@ npm run db:migrate:deploy && npm run seed
 | `database "toki" does not exist` | Falta la base | `createdb toki` |
 | `permission denied for table ...` | Una consulta salió sin adoptar un rol | Usá siempre `withDb(ctx, ...)`, nunca `getPrisma()` directo (ver `CLAUDE.md`) |
 | `connection refused` en el puerto 5432 | Postgres apagado | macOS: `brew services start postgresql@17`. Linux: `sudo systemctl start postgresql` |
-| `role "dev0" does not exist` | El usuario del `.env` no existe | Poné tu usuario (`whoami`) o `postgres` en `DATABASE_URL_MIGRATE` y `DATABASE_URL_TEST` |
+| `role "dev0" does not exist` | El usuario del `.env` no existe en esta máquina | Poné tu usuario (`whoami`) o `postgres` en `DATABASE_URL_MIGRATE` y `DATABASE_URL_TEST` |
 | `Por seguridad la BD de test tiene que terminar en _test` | `DATABASE_URL_TEST` apunta a otra base | Apuntala a `toki_test` (esa base se borra y se recrea) |
 | Falla bajar los binarios de Prisma | Sin internet o red bloqueada | `MIGRATE_WITH=sql npm run db:migrate:deploy` aplica el SQL directo |
 | Los tests fallan después de traer cambios | Hay migraciones nuevas | `npm run test:prepare` |
+| El front muestra datos que no son los tuyos | Está en modo demo | Falta `VITE_API_URL` en `toki/.env`; reiniciá `npm run dev` después de cambiarlo |
+| El front no puede iniciar sesión o falla por CORS | La API no corre o el origen no coincide | Revisá que la API esté en el puerto 3000 y que `CORS_ORIGIN` sea la URL del front |
 
-## Cómo está organizado
+## Cómo está organizada la API
 
 ```text
 src/
@@ -188,7 +267,7 @@ prisma/
   migrations/              SQL: tablas, reglas de acceso, funciones
   seed.ts                  datos de ejemplo
 test/                      tests de integración contra Postgres real
-docs/                      descripción, arquitectura, API, base de datos, plan
+docs/                      descripción, arquitectura, API, base de datos, planes
 ```
 
-**Antes de escribir código, leé `CLAUDE.md`** (13 reglas del proyecto) y, según la tarea, `docs/api.md` y `docs/arquitectura.md`.
+**Antes de escribir código, leé `CLAUDE.md`** (reglas del proyecto) y, según la tarea, `docs/api.md` y `docs/arquitectura.md`.

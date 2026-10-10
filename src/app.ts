@@ -1,3 +1,4 @@
+import { agentWebhookRoutes } from "./modules/agent/webhook.js";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -8,6 +9,7 @@ import { accountRoutes } from "./modules/account/routes.js";
 import { agentRoutes } from "./modules/agent/routes.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { businessRoutes, onboardingRoutes } from "./modules/businesses/routes.js";
+import { caseRoutes, refundRoutes } from "./modules/cases/routes.js";
 import { categoryRoutes, ingredientRoutes, productRoutes } from "./modules/catalog/routes.js";
 import { couponRoutes } from "./modules/coupons/routes.js";
 import { customerRoutes } from "./modules/customers/routes.js";
@@ -36,6 +38,7 @@ export function buildApp() {
       maxAge: 600
     })
   );
+  app.use(agentWebhookRoutes);
   app.use(express.json({ limit: "1mb" }));
 
   const v1 = express.Router();
@@ -61,6 +64,8 @@ export function buildApp() {
   v1.use("/dashboard", dashboardRoutes);
   v1.use("/whatsapp", whatsappRoutes);
   v1.use("/conversations", conversationRoutes);
+  v1.use("/cases", caseRoutes);
+  v1.use("/refunds", refundRoutes);
   v1.use("/public", publicRoutes);
   v1.use("/agent", agentRoutes);
   app.use("/v1", v1);

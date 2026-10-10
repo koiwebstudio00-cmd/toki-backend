@@ -47,6 +47,12 @@ orderRoutes.patch("/:id/status", async (req, res) => {
   res.json(await svc.changeStatus(businessScope(req), id, changeStatusSchema.parse(req.body)));
 });
 
+// Agente v3: el local vio los cambios que hizo el cliente.
+orderRoutes.post("/:id/modification-seen", async (req, res) => {
+  const { id } = idParams.parse(req.params);
+  res.json(await svc.markModificationSeen(businessScope(req), id));
+});
+
 orderRoutes.post("/:id/mark-paid", async (req, res) => {
   const { id } = idParams.parse(req.params);
   res.json(await svc.markPaid(businessScope(req), id));

@@ -143,9 +143,42 @@ export async function completeConnect({ ctx, businessId }: BusinessScope, input:
 
 // ── Inbox ───────────────────────────────────────────────────────────────────
 
+const caseInclude = {
+  order: { select: { id: true, orderCode: true, status: true, total: true, paymentStatus: true } },
+  refunds: { orderBy: { requestedAt: "desc" as const } }
+} satisfies Prisma.ConversationCaseInclude;
+
 const conversationInclude = {
-  customer: { select: { id: true, name: true, phone: true, loyaltyPoints: true } }
+  customer: { select: { id: true, name: true, phone: true, loyaltyPoints: true } },
+  // Agente v3 (0010): por qué se derivó, de qué pedido y si hay que devolver plata.
+  currentCase: { include: caseInclude }
 } satisfies Prisma.WhatsappConversationInclude;
+
+type CaseRow = Prisma.ConversationCaseGetPayload<{ include: typeof caseInclude }>;
+
+export function toCaseDto(c: CaseRow) {
+  return {
+    id: c.id,
+    reason: c.reason,
+    summary: c.summary,
+    status: c.status as "open" | "resolved",
+    openedAt: c.openedAt,
+    resolvedAt: c.resolvedAt,
+    resolutionNote: c.resolutionNote,
+    order: c.order ? { ...c.order, total: toNumber(c.order.total) } : null,
+    refunds: c.refunds.map((r) => ({
+      id: r.id,
+      amount: toNumber(r.amount),
+      reason: r.reason,
+      status: r.status as "pending" | "completed" | "rejected",
+      originalPaymentMethod: r.originalPaymentMethod,
+      destination: (r.destination ?? {}) as { alias?: string; cbu_cvu?: string; holder?: string },
+      requestedAt: r.requestedAt,
+      completedAt: r.completedAt,
+      notes: r.notes
+    }))
+  };
+}
 
 type ConversationRow = Prisma.WhatsappConversationGetPayload<{ include: typeof conversationInclude }>;
 
@@ -158,12 +191,17 @@ function toConversationDto(c: ConversationRow) {
     handoffReason: c.handoffReason,
     lastMessageAt: c.lastMessageAt,
     createdAt: c.createdAt,
-    customer: c.customer
+    customer: c.customer,
+    currentCase: c.currentCase ? toCaseDto(c.currentCase) : null
   };
 }
 
 export async function listConversations({ ctx, businessId }: BusinessScope, q: ListConversationsQuery) {
-  const where: Prisma.WhatsappConversationWhereInput = { businessId, ...(q.status ? { status: q.status } : {}) };
+  const where: Prisma.WhatsappConversationWhereInput = {
+    businessId,
+    ...(q.status ? { status: q.status } : {}),
+    ...(q.reason ? { handoffReason: q.reason } : {})
+  };
   const [rows, total] = await withDb(ctx, async (tx) => [
     await tx.whatsappConversation.findMany({
       where,
@@ -189,7 +227,7 @@ export async function listMessages({ ctx, businessId }: BusinessScope, conversat
   return withDb(ctx, async (tx) => {
     const conversation = await tx.whatsappConversation.findFirst({
       where: { id: conversationId, businessId },
-      select: { id: true, phone: true }
+      select: { id: true, phone: true, currentCase: { include: caseInclude } }
     });
     if (!conversation) throw notFound("La conversación no existe.");
 
@@ -224,7 +262,8 @@ export async function listMessages({ ctx, businessId }: BusinessScope, conversat
         aiIntent: m.aiIntent,
         createdAt: m.createdAt
       })),
-      lastOrder: lastOrder ? { ...lastOrder, total: toNumber(lastOrder.total) } : null
+      lastOrder: lastOrder ? { ...lastOrder, total: toNumber(lastOrder.total) } : null,
+      currentCase: conversation.currentCase ? toCaseDto(conversation.currentCase) : null
     };
   });
 }
@@ -238,14 +277,26 @@ export async function setConversationStatus(
   const row = await withDb(ctx, async (tx) => {
     const current = await tx.whatsappConversation.findFirst({
       where: { id: conversationId, businessId },
-      select: { handoffReason: true }
+      select: { handoffReason: true, currentCaseId: true }
     });
     if (!current) throw notFound("La conversación no existe.");
 
     const handoffReason =
       status === "open" ? null : status === "handoff" ? (current.handoffReason ?? "pedido_humano") : current.handoffReason;
 
-    await tx.whatsappConversation.updateMany({ where: { id: conversationId, businessId }, data: { status, handoffReason } });
+    // Devolverla al bot cierra el caso abierto: si alguien del local la atendió
+    // y la devuelve, el tema quedó resuelto.
+    if (status === "open" && current.currentCaseId) {
+      await tx.conversationCase.updateMany({
+        where: { id: current.currentCaseId, businessId, status: "open" },
+        data: { status: "resolved", resolvedAt: new Date(), resolvedBy: ctx.role === "authenticated" ? ctx.userId : null, resolutionNote: "Conversación devuelta al bot." }
+      });
+    }
+
+    await tx.whatsappConversation.updateMany({
+      where: { id: conversationId, businessId },
+      data: { status, handoffReason, ...(status === "open" ? { currentCaseId: null } : {}) }
+    });
     return tx.whatsappConversation.findUniqueOrThrow({ where: { id: conversationId }, include: conversationInclude });
   });
   return toConversationDto(row);

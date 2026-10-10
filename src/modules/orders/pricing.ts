@@ -200,6 +200,28 @@ function priceItem(product: ProductRow, item: PricingItem): PricedItem {
 }
 
 /**
+ * Valida y cobra una lista de items contra los productos reales del negocio.
+ * La usan el checkout y la modificación de pedidos del agente (sumar productos
+ * a un pedido hecho pasa por las mismas reglas).
+ */
+export async function priceItems(tx: Tx, businessId: string, items: PricingItem[]): Promise<PricedItem[]> {
+  const productIds = [...new Set(items.map((item) => item.productId))];
+  const products = await tx.product.findMany({
+    where: { businessId, id: { in: productIds }, isAvailable: true },
+    ...productWithOptions
+  });
+  if (products.length !== productIds.length) {
+    throw invalid("Uno o más productos ya no están disponibles. Actualizá el carrito y volvé a intentar.");
+  }
+  const byId = new Map(products.map((product) => [product.id, product]));
+  return items.map((item) => {
+    const product = byId.get(item.productId);
+    if (!product) throw invalid("Uno de los productos del carrito ya no está disponible.");
+    return priceItem(product, item);
+  });
+}
+
+/**
  * Arma el payload de `persist_order`. No escribe nada: solo lee y calcula.
  * Corre dentro de la transacción de quien llama, con contexto `service_role`.
  */
@@ -214,24 +236,8 @@ export async function buildOrderPayload(tx: Tx, business: PricingBusiness, input
 
   await assertPaymentMethodEnabled(tx, business.id, input.paymentMethod);
 
-  const productIds = [...new Set(input.items.map((item) => item.productId))];
-  const products = await tx.product.findMany({
-    where: { businessId: business.id, id: { in: productIds }, isAvailable: true },
-    ...productWithOptions
-  });
-  if (products.length !== productIds.length) {
-    throw invalid("Uno o más productos ya no están disponibles. Actualizá el carrito y volvé a intentar.");
-  }
-  const byId = new Map(products.map((product) => [product.id, product]));
-
-  let subtotal = 0;
-  const items = input.items.map((item) => {
-    const product = byId.get(item.productId);
-    if (!product) throw invalid("Uno de los productos del carrito ya no está disponible.");
-    const priced = priceItem(product, item);
-    subtotal = money(subtotal + priced.totalPrice);
-    return priced;
-  });
+  const items = await priceItems(tx, business.id, input.items);
+  const subtotal = items.reduce((sum, item) => money(sum + item.totalPrice), 0);
 
   const minimum = toNumber(business.minimumOrderAmount);
   if (subtotal < minimum) {

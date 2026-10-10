@@ -4,6 +4,12 @@
 import "dotenv/config";
 
 process.env.NODE_ENV = "test";
+// Nunca heredar las credenciales reales ni activar el worker en una prueba automática.
+process.env.OPENAI_API_KEY = "";
+process.env.OPENAI_MODEL = "";
+process.env.AI_GATEWAY_API_KEY = "";
+process.env.AI_GATEWAY_MODEL = "";
+process.env.AGENT_WORKER_ENABLED = "false";
 
 if (process.env.DATABASE_URL_TEST) {
   const url = new URL(process.env.DATABASE_URL_TEST);

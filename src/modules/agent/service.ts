@@ -7,14 +7,35 @@
 // Las respuestas son las mismas que devolvían las RPC `agent_*`, así el prompt
 // del agente no cambia al migrar.
 import { Prisma } from "@prisma/client";
+import { config } from "../../config.js";
 import { systemCtx, type Tx, withDb } from "../../lib/db.js";
-import { notFound } from "../../lib/errors.js";
+import { ApiError, notFound } from "../../lib/errors.js";
+import { toNumber } from "../../lib/money.js";
 import { newPaymentProofKey, putObject } from "../../lib/r2.js";
 import { zernioDownload } from "../../lib/zernio.js";
 import { isOpen } from "../businesses/service.js";
 import { buildOrderPayload, persistOrder, type PricingItem } from "../orders/pricing.js";
+import {
+  buildClock,
+  buildMenu,
+  type Clock,
+  DEFAULT_BOT_NAME,
+  DRAFT_TTL_HOURS,
+  etaFromLocal,
+  isFullUuid,
+  mediaUrlFromPayload,
+  orderEta,
+  shortRefs,
+  toneLabel
+} from "./context.js";
+import { checkQuote, type QuoteOptions } from "./quote.js";
+import { decorateOrder } from "./orders.js";
+import * as repo from "./repo.js";
+import { BOT_DEFAULTS, allowedToolNames } from "./configuration.js";
+import { buildAgentPrompt } from "./prompt.js";
 import type {
   DraftAddItemInput,
+  DraftAddItemsInput,
   DraftDetailsInput,
   LogMessageInput,
   OrderDetailsInput,
@@ -45,12 +66,13 @@ export async function resolveIntegration(accountId: string) {
     if (!integration?.business?.isActive) throw notFound("No hay ningún negocio conectado a esta cuenta.");
     const bot = await tx.botSettings.findUnique({
       where: { businessId: integration.businessId },
-      select: { isEnabled: true, botName: true, tone: true, fallbackMessage: true, handoffEnabled: true }
+      select: { engine: true, isEnabled: true, botName: true, tone: true, fallbackMessage: true, handoffEnabled: true }
     });
     return {
       businessId: integration.businessId,
       business: integration.business,
-      botEnabled: bot?.isEnabled ?? false,
+      botEnabled: (bot?.isEnabled ?? false) && bot?.engine !== "native",
+      engine: bot?.engine ?? "legacy",
       bot: bot ?? null
     };
   });
@@ -165,32 +187,271 @@ export async function listMessages(
 
 // ── Lecturas ────────────────────────────────────────────────────────────────
 
-export const context = (businessId: string, conversationId: string, k: number) =>
-  rpc(Prisma.sql`select public.agent_context(${businessId}::uuid, ${conversationId}::uuid, ${k}) as result`);
+/** Reloj del negocio (hora local, abierto, hasta cuándo o cuándo abre). */
+async function loadClock(tx: Tx, businessId: string): Promise<Clock | null> {
+  const row = await repo.clock(tx, businessId);
+  if (!row) return null;
+  const windows = await repo.windows(tx, businessId, row.now_local.slice(0, 10));
+  return buildClock({
+    timezone: row.timezone,
+    manualStatus: row.manual_status,
+    isOpen: row.is_open,
+    nowLocal: row.now_local,
+    windows
+  });
+}
+
+/**
+ * Contexto del turno (v3). Sobre lo que devuelve `agent_context` agrega:
+ *
+ * - `clock`: hora local del negocio, si está abierto, a qué hora cierra o
+ *   cuándo abre. El modelo no sabía qué día ni qué hora era.
+ * - `menu`: la carta compacta con ids cortos (hasta 50 productos completa; con
+ *   más, un resumen). Con la carta a la vista el agente responde "¿qué
+ *   tienen?" y carga un pedido sin buscar producto por producto.
+ * - `bot`: nombre (Sofi por defecto) y tono legible.
+ * - `active_order.status_label` y `eta`.
+ * - Los links del menú y del seguimiento. La URL del menú no vive en la base:
+ *   se arma con `FRONT_URL` y el slug.
+ *
+ * Antes de leer, descarta el borrador si pasaron 4 h sin cambios: si no, un
+ * pedido abandonado hace días reaparece como "el pedido que estás armando".
+ */
+export async function context(businessId: string, conversationId: string, k: number) {
+  return withDb(systemCtx, async (tx) => {
+    if (!(await repo.conversationBelongsToBusiness(tx, businessId, conversationId))) {
+      throw notFound("La conversación no existe.");
+    }
+    await repo.expireStaleDraft(tx, businessId, conversationId, DRAFT_TTL_HOURS);
+
+    const rows = await tx.$queryRaw<{ result: Json }[]>(
+      Prisma.sql`select public.agent_context(${businessId}::uuid, ${conversationId}::uuid, ${k}) as result`
+    );
+    const result = rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+    const business = result.business as Json | undefined;
+    if (!business || result.error) return result;
+
+    const [clock, bot, products, ids] = await Promise.all([
+      loadClock(tx, businessId),
+      repo.botSettings(tx, businessId),
+      repo.menuProducts(tx, businessId),
+      repo.catalogIds(tx, businessId)
+    ]);
+
+    const base = config.FRONT_URL.replace(/\/+$/, "");
+    const slug = typeof business.slug === "string" ? business.slug : null;
+    if (slug) business.menu_url = `${base}/${slug}`;
+
+    const timezone = clock?.timezone ?? "America/Argentina/Buenos_Aires";
+    if (clock) result.clock = clock;
+
+    result.menu = buildMenu(
+      products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        price: toNumber(p.price),
+        isFeatured: p.isFeatured,
+        category: p.category,
+        options: p.options.map((o) => ({
+          ...o,
+          values: o.values.map((v) => ({ id: v.id, name: v.name, priceDelta: toNumber(v.priceDelta) }))
+        }))
+      })),
+      shortRefs(ids)
+    );
+
+    const botJson = (result.bot as Json | undefined) ?? {};
+    result.bot = {
+      ...botJson,
+      bot_name: bot?.botName?.trim() || DEFAULT_BOT_NAME,
+      tone: bot?.tone ?? botJson.tone ?? "friendly",
+      tone_label: toneLabel(bot?.tone),
+      handoff_enabled: bot?.handoffEnabled ?? true,
+      instructions: bot?.instructions ?? "",
+      business_context: bot?.businessContext ?? "",
+      enabled_tools: bot?.enabledTools ?? BOT_DEFAULTS.enabledTools
+    };
+    const agentSettings = bot ?? BOT_DEFAULTS;
+    result.allowed_tools = allowedToolNames(agentSettings);
+    result.agent_prompt = buildAgentPrompt(agentSettings, String(business.name ?? "el negocio"));
+    result.agent_config_updated_at = bot?.updatedAt.toISOString() ?? null;
+
+    const order = decorateOrder(result.active_order as Json | null | undefined);
+    if (order) {
+      const status = String(order.status ?? "");
+      const minutes = business.estimated_delivery_minutes as number | null;
+      // Un pedido que espera a que abra el local sale a partir de la apertura.
+      order.eta =
+        status === "pending" && clock && !clock.is_open && clock.next_open && minutes
+          ? etaFromLocal(clock.next_open.at, minutes)
+          : orderEta({ status, createdAt: order.created_at as string, estimatedMinutes: minutes, timezone });
+      const code = typeof order.order_code === "string" ? order.order_code : null;
+      if (slug && code) order.track_url = `${base}/${slug}/order/${code}`;
+    }
+
+    // Context must not provide a back door to a disabled order capability.
+    if (!agentSettings.enabledTools.includes("order_status")) result.active_order = null;
+    if (!agentSettings.enabledTools.includes("create_orders")) result.draft = null;
+    return result;
+  });
+}
+
+// ── Ids cortos ──────────────────────────────────────────────────────────────
+
+type Resolved = { ok: true; id: string } | { ok: false; error: string };
+
+/**
+ * La carta del contexto lleva ids cortos (6 u 8 caracteres). Las tools aceptan
+ * el corto o el UUID completo; acá se traduce, siempre dentro del negocio.
+ */
+async function resolveRef(
+  find: (prefix: string) => Promise<string[]>,
+  ref: string,
+  notFoundMessage: string
+): Promise<Resolved> {
+  const value = ref.trim().toLowerCase();
+  if (isFullUuid(value)) return { ok: true, id: value };
+  const matches = await find(value);
+  if (matches.length === 1) return { ok: true, id: matches[0]! };
+  if (matches.length > 1) return { ok: false, error: `${notFoundMessage} El código ${ref} es ambiguo: usá el que figura en la carta.` };
+  return { ok: false, error: notFoundMessage };
+}
+
+const PRODUCT_NOT_FOUND = "No encontré ese producto en la carta.";
+const OPTION_NOT_FOUND = "Alguna de las opciones elegidas no existe o no está disponible.";
+
+export function resolveProductRef(tx: Tx, businessId: string, ref: string) {
+  return resolveRef((prefix) => repo.productIdsByPrefix(tx, businessId, prefix), ref, PRODUCT_NOT_FOUND);
+}
+
+export async function resolveOptionRefs(
+  tx: Tx,
+  businessId: string,
+  refs: string[]
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  const ids: string[] = [];
+  for (const ref of refs) {
+    const resolved = await resolveRef((prefix) => repo.optionValueIdsByPrefix(tx, businessId, prefix), ref, OPTION_NOT_FOUND);
+    if (!resolved.ok) return resolved;
+    ids.push(resolved.id);
+  }
+  return { ok: true, ids };
+}
 
 export const searchProducts = (businessId: string, q: string | undefined, limit: number) =>
   rpc(Prisma.sql`select public.agent_search_products(${businessId}::uuid, ${q ?? null}, ${limit}) as result`);
 
-export const productDetail = (businessId: string, productId: string) =>
-  rpc(Prisma.sql`select public.agent_product_detail(${businessId}::uuid, ${productId}::uuid) as result`);
+export async function productDetail(businessId: string, productRef: string) {
+  return withDb(systemCtx, async (tx) => {
+    const product = await resolveProductRef(tx, businessId, productRef);
+    if (!product.ok) return product;
+    const rows = await tx.$queryRaw<{ result: Json }[]>(
+      Prisma.sql`select public.agent_product_detail(${businessId}::uuid, ${product.id}::uuid) as result`
+    );
+    return rows[0]?.result ?? { ok: false, error: PRODUCT_NOT_FOUND };
+  });
+}
 
 export const searchFaq = (businessId: string, q: string | undefined, limit: number) =>
   rpc(Prisma.sql`select public.agent_search_faq(${businessId}::uuid, ${q ?? ""}, ${limit}) as result`);
 
-export const orderStatus = (businessId: string, conversationId: string, orderCode?: string) =>
-  rpc(
-    Prisma.sql`select public.agent_order_status(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
-  );
+/** Estado del pedido, con el estado en palabras, si se puede cambiar o cancelar y el link de seguimiento. */
+export async function orderStatus(businessId: string, conversationId: string, orderCode?: string) {
+  return withDb(systemCtx, async (tx) => {
+    const orderId = await repo.resolveOrderId(tx, businessId, conversationId, orderCode, true);
+    if (!orderId) return { ok: false, error: "No encontré ningún pedido con esos datos." };
+    const order = decorateOrder(await repo.orderJson(tx, orderId));
+    if (order && typeof order.order_code === "string") {
+      const business = await tx.business.findUnique({ where: { id: businessId }, select: { slug: true } });
+      if (business) order.track_url = `${config.FRONT_URL.replace(/\/+$/, "")}/${business.slug}/order/${order.order_code}`;
+    }
+    return { ok: true, pedido: order };
+  });
+}
 
 // ── Borrador ────────────────────────────────────────────────────────────────
 
 export const draftGet = (businessId: string, conversationId: string) =>
   rpc(Prisma.sql`select public.agent_draft_get(${businessId}::uuid, ${conversationId}::uuid) as result`);
 
-export const draftAddItem = (i: DraftAddItemInput) =>
-  rpc(Prisma.sql`select public.agent_draft_add_item(
-    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${i.productId}::uuid,
-    ${i.quantity}, ${i.optionValueIds}::uuid[], ${i.notes ?? null}) as result`);
+export async function draftAddItem(i: DraftAddItemInput) {
+  return withDb(systemCtx, async (tx) => {
+    const product = await resolveProductRef(tx, i.businessId, i.productId);
+    if (!product.ok) return product;
+    const options = await resolveOptionRefs(tx, i.businessId, i.optionValueIds);
+    if (!options.ok) return options;
+    const rows = await tx.$queryRaw<{ result: Json }[]>(Prisma.sql`select public.agent_draft_add_item(
+      ${i.businessId}::uuid, ${i.conversationId}::uuid, ${product.id}::uuid,
+      ${i.quantity}, ${options.ids}::uuid[], ${i.notes ?? null}) as result`);
+    return rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+  });
+}
+
+/**
+ * Varios productos en una llamada (v3): un pedido directo ("2 muzzas y una
+ * coca") se carga de una vez. Cada item se valida por separado: uno que falla
+ * no frena al resto, y el agente le cuenta al cliente cuál no se pudo cargar.
+ */
+export async function draftAddItems(input: DraftAddItemsInput) {
+  return withDb(systemCtx, async (tx) => {
+    if (!(await repo.conversationBelongs(tx, input.businessId, input.conversationId))) {
+      return { ok: false as const, error: "Conversacion invalida." };
+    }
+    const resultados: { producto: string; cantidad: number; ok: boolean; error?: string }[] = [];
+    for (const item of input.items) {
+      const base = { producto: item.productId, cantidad: item.quantity };
+      const product = await resolveProductRef(tx, input.businessId, item.productId);
+      if (!product.ok) {
+        resultados.push({ ...base, ok: false, error: product.error });
+        continue;
+      }
+      const options = await resolveOptionRefs(tx, input.businessId, item.optionValueIds);
+      if (!options.ok) {
+        resultados.push({ ...base, ok: false, error: options.error });
+        continue;
+      }
+      const rows = await tx.$queryRaw<{ result: Json }[]>(Prisma.sql`select public.agent_draft_add_item(
+        ${input.businessId}::uuid, ${input.conversationId}::uuid, ${product.id}::uuid,
+        ${item.quantity}, ${options.ids}::uuid[], ${item.notes ?? null}) as result`);
+      const result = rows[0]?.result ?? {};
+      resultados.push(
+        result.ok === true ? { ...base, ok: true } : { ...base, ok: false, error: String(result.error ?? "No se pudo agregar.") }
+      );
+    }
+    return {
+      ok: resultados.every((r) => r.ok),
+      resultados,
+      pedido: await repo.draftJson(tx, input.conversationId)
+    };
+  });
+}
+
+/**
+ * Cambia la cantidad de un item del borrador; con 0 lo saca. El precio
+ * unitario queda el del alta (al confirmar se recalcula todo contra la base).
+ */
+export async function draftSetItemQuantity(businessId: string, conversationId: string, itemId: string, quantity: number) {
+  return withDb(systemCtx, async (tx) => {
+    const item = await repo.openDraftItem(tx, businessId, conversationId, itemId);
+    if (!item) return { ok: false as const, error: "Ese item ya no esta en el pedido." };
+
+    if (quantity === 0) {
+      await repo.deleteDraftItem(tx, item.id);
+    } else {
+      const { product } = item;
+      if (product.trackStock && product.stockQuantity < quantity) {
+        return { ok: false as const, error: `Solo quedan ${product.stockQuantity} unidades de ${product.name}.` };
+      }
+      const short = await repo.optionValuesShort(tx, businessId, item.optionValueIds, quantity);
+      if (short.length) {
+        return { ok: false as const, error: `Solo quedan ${short[0]!.stockQuantity} de ${short[0]!.name}.` };
+      }
+      await repo.updateDraftItemQuantity(tx, item.id, quantity, toNumber(item.unitPrice));
+    }
+    return { ok: true as const, pedido: await repo.draftJson(tx, conversationId) };
+  });
+}
 
 export const draftRemoveItem = (businessId: string, conversationId: string, itemId: string) =>
   rpc(
@@ -229,8 +490,9 @@ const fail = (error: string) => ({ ok: false as const, error });
  * un precio ni una cantidad. Los errores vuelven como `{ ok: false, error }`
  * legible: el agente se lo explica al cliente en vez de decir que se confirmó.
  */
-export async function confirmDraft(businessId: string, conversationId: string) {
-  return withDb(systemCtx, async (tx) => {
+export async function confirmDraft(businessId: string, conversationId: string, options: QuoteOptions = {}) {
+  try { return await withDb(systemCtx, async (tx) => {
+    await tx.$queryRaw`select id from public.whatsapp_order_drafts where business_id = ${businessId}::uuid and conversation_id = ${conversationId}::uuid for update`;
     const draft = await tx.whatsappOrderDraft.findFirst({
       where: { conversationId, businessId },
       include: { items: { orderBy: { createdAt: "asc" } } }
@@ -263,8 +525,18 @@ export async function confirmDraft(businessId: string, conversationId: string) {
     });
     const business = await tx.business.findFirst({ where: { id: businessId, isActive: true } });
     if (!business) return fail("El negocio no está disponible.");
-    if (!(await isOpen(tx, businessId))) {
-      return fail("El local está cerrado en este momento, no puedo confirmar el pedido.");
+
+    // Con el local cerrado el pedido se toma igual y se prepara al abrir (D2).
+    // No se toma si lo cerraron a mano o si no abre en los próximos 7 días:
+    // quedaría esperando sin fecha.
+    const open = await isOpen(tx, businessId);
+    const clock = open ? null : await loadClock(tx, businessId);
+    if (!open && !clock?.next_open) {
+      return fail(
+        clock?.manual_status === "closed"
+          ? "El local no está tomando pedidos por ahora."
+          : "El local está cerrado y no tiene horarios cargados para los próximos días, así que no puedo tomar el pedido."
+      );
     }
 
     const items: PricingItem[] = draft.items.map((item) => ({
@@ -274,7 +546,6 @@ export async function confirmDraft(businessId: string, conversationId: string) {
       notes: item.notes
     }));
 
-    try {
       const payload = await buildOrderPayload(tx, business, {
         customer: {
           name: d.customerName,
@@ -289,34 +560,75 @@ export async function confirmDraft(businessId: string, conversationId: string) {
         paymentMethod: d.paymentMethod,
         items
       });
+      const { orderCode: _generatedCode, ...details } = payload;
+      void _generatedCode;
+      const quote = { action: "confirmar_pedido", draftId: draft.id, ...details };
+      checkQuote(quote, options);
+      if (options.quoteOnly) return { ok: true as const, quote };
       const order = await persistOrder(tx, { ...payload, source: "whatsapp", conversationId });
       await tx.whatsappOrderDraft.update({
         where: { id: draft.id },
         data: { status: "confirmed", orderId: order.id }
       });
-      return { ok: true as const, ...order };
-    } catch (err) {
-      // Mensaje legible para el cliente final, no un stack.
-      return fail(err instanceof Error ? err.message : "No se pudo confirmar el pedido.");
-    }
-  });
+
+      const nextOpen = clock?.next_open ?? null;
+      if (nextOpen) {
+        await repo.noteClosedOrder(tx, order.id, `Recibido con el local cerrado: se prepara al abrir (${nextOpen.label}).`);
+      }
+      const minutes = business.estimatedDeliveryMinutes;
+      const eta = nextOpen
+        ? etaFromLocal(nextOpen.at, minutes)
+        : orderEta({ status: "pending", createdAt: new Date(), estimatedMinutes: minutes, timezone: business.timezone });
+      const base = config.FRONT_URL.replace(/\/+$/, "");
+      const transfer = d.paymentMethod === "transfer" ? await repo.transferSettings(tx, businessId) : null;
+
+      return {
+        ok: true as const,
+        ...order,
+        // Lo que el agente le cuenta al cliente al confirmar.
+        para_la_apertura: Boolean(nextOpen),
+        abre: nextOpen?.label ?? null,
+        eta,
+        track_url: `${base}/${business.slug}/order/${order.orderCode}`,
+        ...(transfer
+          ? {
+              transferencia: {
+                alias: transfer.transferAlias,
+                cbu_cvu: transfer.transferCbu,
+                titular: transfer.transferHolder,
+                banco: transfer.transferBank
+              }
+            }
+          : {})
+      };
+  }); } catch (err) {
+    // Catch outside the transaction: no partial order may commit on an error.
+    if (err instanceof ApiError && err.code === "VALIDATION_ERROR") return fail(err.message);
+    throw err;
+  }
 }
 
 // ── Pedido ya confirmado ────────────────────────────────────────────────────
 
+/** Legacy RPCs scope codes to business only; validate contact before invoking them. */
+async function contactOrderRpc(businessId: string, conversationId: string, orderCode: string | undefined, sql: (code: string) => Prisma.Sql) {
+  return withDb(systemCtx, async (tx) => {
+    const id = await repo.resolveOrderId(tx, businessId, conversationId, orderCode);
+    const order = id ? await repo.orderCodeById(tx, businessId, id) : null;
+    if (!order) return { ok: false, error: "No encontré ningún pedido con esos datos." };
+    const rows = await tx.$queryRaw<{ result: Json }[]>(sql(order.orderCode));
+    return rows[0]?.result ?? { ok: false, error: "No se pudo completar la acción." };
+  });
+}
+
 export const updateOrderDetails = (i: OrderDetailsInput) =>
-  rpc(Prisma.sql`select public.agent_order_update_details(
-    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${i.orderCode ?? null},
+  contactOrderRpc(i.businessId, i.conversationId, i.orderCode, (code) => Prisma.sql`select public.agent_order_update_details(
+    ${i.businessId}::uuid, ${i.conversationId}::uuid, ${code},
     ${i.orderType ?? null}, ${i.deliveryAddress ?? null}, ${i.paymentMethod ?? null}) as result`);
 
 export const addDraftItemsToOrder = (businessId: string, conversationId: string, orderCode?: string) =>
-  rpc(
-    Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${orderCode ?? null}) as result`
-  );
-
-export const handoff = (businessId: string, conversationId: string, reason?: string | null) =>
-  rpc(
-    Prisma.sql`select public.agent_conversation_handoff(${businessId}::uuid, ${conversationId}::uuid, ${reason ?? null}) as result`
+  contactOrderRpc(businessId, conversationId, orderCode,
+    (code) => Prisma.sql`select public.agent_order_add_draft_items(${businessId}::uuid, ${conversationId}::uuid, ${code}) as result`
   );
 
 // ── Comprobantes de pago ────────────────────────────────────────────────────
@@ -331,8 +643,10 @@ const PROOF_EXTENSIONS: Record<string, string> = {
 /** El comprobante se guarda contra un pedido: el del código, o el último de la conversación. */
 async function resolveOrder(tx: Tx, businessId: string, conversationId: string, orderCode?: string | null) {
   if (orderCode) {
+    const id = await repo.resolveOrderId(tx, businessId, conversationId, orderCode, true);
+    if (!id) return null;
     return tx.order.findFirst({
-      where: { businessId, orderCode: orderCode.toUpperCase() },
+      where: { businessId, id },
       select: { id: true, orderCode: true }
     });
   }
@@ -348,30 +662,54 @@ async function resolveOrder(tx: Tx, businessId: string, conversationId: string, 
  * el negocio lo revise. Solo se guarda si hay un pedido al que atarlo: un
  * comprobante suelto no le sirve a nadie.
  */
+/** Cuánto hacia atrás se busca el adjunto cuando el agente no manda la URL. */
+const PROOF_LOOKBACK_MS = 10 * 60_000;
+
 export async function savePaymentProof(input: PaymentProofInput) {
   const prepared = await withDb(systemCtx, async (tx) => {
-    if (input.providerMessageId) {
-      const already = await tx.orderPaymentProof.findFirst({
-        where: { businessId: input.businessId, providerMessageId: input.providerMessageId },
-        select: { id: true }
-      });
-      if (already) return { kind: "duplicate" as const, id: already.id };
-    }
     const conversation = await tx.whatsappConversation.count({
       where: { id: input.conversationId, businessId: input.businessId }
     });
     if (conversation === 0) return { kind: "error" as const, error: "Conversación inválida." };
 
+    // Sin URL (v3): el comprobante pudo llegar en otro mensaje de la ráfaga.
+    // Se toma la última imagen o PDF del cliente de los últimos minutos.
+    let mediaUrl = input.mediaUrl ?? null;
+    let mediaType = input.mediaType;
+    let providerMessageId = input.providerMessageId ?? null;
+    if (!mediaUrl) {
+      const media = await repo.latestInboundMedia(
+        tx,
+        input.businessId,
+        input.conversationId,
+        new Date(Date.now() - PROOF_LOOKBACK_MS)
+      );
+      mediaUrl = mediaUrlFromPayload(media?.rawPayload);
+      if (!media || !mediaUrl) {
+        return { kind: "error" as const, error: "No encontré una imagen o PDF reciente del cliente para guardar como comprobante." };
+      }
+      mediaType = media.messageType;
+      providerMessageId ??= media.providerMessageId;
+    }
+
+    if (providerMessageId) {
+      const already = await tx.orderPaymentProof.findFirst({
+        where: { businessId: input.businessId, providerMessageId },
+        select: { id: true }
+      });
+      if (already) return { kind: "duplicate" as const, id: already.id };
+    }
+
     const order = await resolveOrder(tx, input.businessId, input.conversationId, input.orderCode);
     if (!order) return { kind: "error" as const, error: "No encontré un pedido al que asociar el comprobante." };
-    return { kind: "ready" as const, order };
+    return { kind: "ready" as const, order, mediaUrl, mediaType, providerMessageId };
   });
 
   if (prepared.kind === "duplicate") return { ok: true as const, duplicate: true, id: prepared.id };
   if (prepared.kind === "error") return fail(prepared.error);
 
   // La descarga y la subida quedan FUERA de la transacción: son llamadas de red.
-  const { body, contentType } = await zernioDownload(input.mediaUrl);
+  const { body, contentType } = await zernioDownload(prepared.mediaUrl);
   const extension = PROOF_EXTENSIONS[contentType.split(";")[0]!.trim()];
   if (!extension) return fail("El archivo no es una imagen ni un PDF.");
 
@@ -386,8 +724,8 @@ export async function savePaymentProof(input: PaymentProofInput) {
           orderId: prepared.order.id,
           conversationId: input.conversationId,
           storagePath: key,
-          mediaType: input.mediaType,
-          providerMessageId: input.providerMessageId ?? null
+          mediaType: prepared.mediaType,
+          providerMessageId: prepared.providerMessageId
         },
         select: { id: true }
       })

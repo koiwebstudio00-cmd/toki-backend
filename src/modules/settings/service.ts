@@ -5,6 +5,8 @@ import { withDb } from "../../lib/db.js";
 import { ApiError, notFound } from "../../lib/errors.js";
 import { toNumber } from "../../lib/money.js";
 import type { BusinessScope } from "../../lib/request.js";
+import { BOT_DEFAULTS } from "../agent/configuration.js";
+import * as repo from "./repo.js";
 import type {
   BotSettingsInput,
   CreateFaqInput,
@@ -83,18 +85,13 @@ export async function upsertLoyalty({ ctx, businessId }: BusinessScope, input: L
 
 // ── Bot ─────────────────────────────────────────────────────────────────────
 
-const botSelect = { isEnabled: true, botName: true, tone: true, fallbackMessage: true, handoffEnabled: true } as const;
-
 export async function getBotSettings({ ctx, businessId }: BusinessScope) {
-  const row = await withDb(ctx, (tx) => tx.botSettings.findUnique({ where: { businessId }, select: botSelect }));
-  // create_business_with_owner siempre crea la fila; si falta, se crea con defaults.
-  return row ?? { isEnabled: true, botName: "Toki", tone: "friendly", fallbackMessage: "Te derivo con una persona del equipo para que pueda ayudarte.", handoffEnabled: true };
+  const row = await withDb(ctx, (tx) => repo.getBot(tx, businessId));
+  return row ?? { ...BOT_DEFAULTS, updatedAt: null };
 }
 
 export async function updateBotSettings({ ctx, businessId }: BusinessScope, input: BotSettingsInput) {
-  return withDb(ctx, (tx) =>
-    tx.botSettings.upsert({ where: { businessId }, create: { businessId, ...input }, update: input, select: botSelect })
-  );
+  return withDb(ctx, (tx) => repo.saveBot(tx, businessId, input));
 }
 
 // ── FAQs ────────────────────────────────────────────────────────────────────

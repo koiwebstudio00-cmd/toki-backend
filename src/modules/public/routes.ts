@@ -2,9 +2,15 @@ import { Router } from "express";
 import { publicReadLimiter, publicWriteLimiter } from "../../middleware/rateLimit.js";
 import { checkoutSchema, slugCodeParams, slugIdParams, slugParams, validateCouponSchema } from "./schemas.js";
 import * as svc from "./service.js";
+import { prepareCatalog, prepareCatalogSchema } from "../catalog/service.js";
 
 /** /v1/public — sin sesión. Lo consume el menú del cliente final. */
 export const publicRoutes = Router();
+
+publicRoutes.post("/businesses/:slug/catalog-requests", publicWriteLimiter(), async (req, res) => {
+  const { slug } = slugParams.parse(req.params);
+  res.json(await prepareCatalog(slug, prepareCatalogSchema.parse(req.body)));
+});
 
 publicRoutes.get("/businesses/:slug", publicReadLimiter(), async (req, res) => {
   const { slug } = slugParams.parse(req.params);

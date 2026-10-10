@@ -27,6 +27,10 @@ export const completeConnectSchema = z.object({
 
 export const listConversationsQuery = z.object({
   status: z.enum(["open", "handoff", "closed"]).optional(),
+  // Motivo de la derivación (agente v3): reembolso, cancelacion, queja...
+  reason: z
+    .enum(["cancelacion", "reembolso", "cambio_pedido", "queja", "pedido_humano", "no_puedo_ayudar"])
+    .optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50)
 });
