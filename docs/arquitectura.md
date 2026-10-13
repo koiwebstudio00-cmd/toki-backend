@@ -337,3 +337,10 @@ Al terminar una tarea: `npm run lint && npx tsc --noEmit && npm run build && npm
 - [ ] Tokens y contraseñas nunca en logs.
 - [ ] Emails fuera de transacciones.
 - [ ] Backups probados con restore antes de migrar datos reales.
+
+
+## Mercado Pago y arquitectura confirmada el 12 de octubre de 2026
+
+`toki-api` es el backend operativo del frontend. Las referencias a Edge Functions o migración desde Supabase en secciones históricas describen el sistema anterior. Las integraciones nuevas viven en módulos Express y migraciones de este repositorio. El agente nativo actual se documenta en [agente-nativo.md](agente-nativo.md).
+
+La etapa inicial de Mercado Pago agrega `/v1/integrations/mercadopago`, OAuth de vendedor y persistencia aislada. Tokens de sesión propios se hashean; access y refresh tokens del proveedor se cifran con AES-256-GCM y una clave separada porque deben poder enviarse nuevamente a MP. Las tablas de secretos carecen de grants para el navegador. El módulo incluye worker de QR con leases en PostgreSQL, recepción HMAC, consulta de Orders y publicación por el SSE existente. La habilitación de nuevos QR es independiente del procesamiento de cobros anteriores. Las transacciones de Prisma fijan UTC para serializar fechas consistentemente. [Diseño y operación](mercadopago.md).

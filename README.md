@@ -22,6 +22,7 @@ npm run test:prepare && npm test
 
 | Doc                                                          | Contenido                                               |
 | ------------------------------------------------------------ | ------------------------------------------------------- |
+| [`docs/mercadopago.md`](docs/mercadopago.md) | OAuth, QR impreso integrado, webhooks, worker y activación controlada |
 | [`docs/setup-local.md`](docs/setup-local.md)                 | Entorno local paso a paso                               |
 | [`docs/descripcion.md`](docs/descripcion.md)                 | Qué es Toki y qué módulos tiene                         |
 | [`docs/arquitectura.md`](docs/arquitectura.md)               | Auth, contextos de BD, estructura, R2, realtime, deploy |

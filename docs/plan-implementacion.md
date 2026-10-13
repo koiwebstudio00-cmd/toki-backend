@@ -171,3 +171,18 @@ F7 al final, con todo lo anterior verificado
 ## Agente nativo por negocio — 2026-10-08
 
 Configuración, preview aislado, herramientas operativas, webhook firmado de Zernio, cola PostgreSQL, presupuesto por negocio, confirmaciones con importes verificados, bandeja de salida, adjuntos/comprobantes, derivación humana y panel de revisión implementados. Migraciones 0013–0016. Pruebas locales con base aislada y proveedores simulados. El 10/10 se verificó OpenAI directo con catálogo, memoria, herramientas nativas y transcripción real; pendiente el piloto completo WhatsApp/Zernio/R2 y el despliegue. Procedimiento: [agente-nativo.md](agente-nativo.md).
+
+
+## Mercado Pago: base y QR impreso — 12 de octubre de 2026
+
+Backend confirmado: `toki-api`. Etapa 1: OAuth PKCE, state por usuario/negocio, cifrado, renovación explícita, tablas y RLS (`0017`). Etapa 2: UI de conexión/retorno, cajas existentes validadas, cobro QR idempotente sobre pedidos existentes, webhook firmado, worker recuperable, consulta autoritativa, cancelación, SSE y aceptación manual/automática (`0018`). Apagado por defecto.
+
+Verificado localmente con proveedor simulado. Pendiente: validación oficial con cuentas/QR MP, Point, venta presencial pendiente, renovación programada, gestión de incidencias/contracargos y piloto real. [Estado y configuración](mercadopago.md).
+
+## Catálogo POS y panel de atención — 13 de octubre de 2026
+
+`GET /v1/products/pos` entrega páginas de 16 productos con búsqueda por nombre/código y categoría, respetando el negocio. La venta reutiliza `create_manual_sale`: precios y stock siguen validados en servidor. Tres pruebas nuevas cubren paginación, filtros y aislamiento; suite total de 436 pruebas en 26 archivos.
+
+El frontend incluye carrito y confirmación de efectivo/transferencia, configuración del agente en siete secciones y conversaciones a todo el espacio disponible. La eliminación de «Actividad reciente» afecta solo al panel: se conservan registros y endpoints de auditoría. No cambia el contrato de conversaciones ni habilita envío manual desde Toki. Ver [QA POS](../../toki/docs/ORDERS-CHECKOUT-POS-QA.md) y [pruebas del panel](../../toki/docs/TESTING.md).
+
+Esta entrega requiere despliegue coordinado de API y frontend. Aplicar las migraciones `0017`–`0018` mediante el procedimiento habitual; mantener Mercado Pago desactivado hasta configurar y validar el piloto. No se ejecutaron migraciones ni cobros en producción durante estas pruebas.

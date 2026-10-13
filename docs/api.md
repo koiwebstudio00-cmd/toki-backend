@@ -265,12 +265,15 @@ SpecialHour = { id?, date: "YYYY-MM-DD", isClosed, opensAt: "HH:mm" | null, clos
 | Método | Ruta | Auth | Body / Query | Origen |
 | --- | --- | --- | --- | --- |
 | GET | `/products` | M | `?categoryId=&available=&featured=&lowStock=true&search=&barcode=` | `ProductsPage`, `ManualSalePage` |
+| GET | `/products/pos` | M | `?categoryId=&search=&offset=0&limit=16` | Catálogo paginado de venta presencial |
 | GET | `/products/:id` | M | — | `ProductEditorPage` |
 | POST | `/products` | A | `ProductInput` | `products.insert` + `product_options.insert` + `product_option_values.insert` |
 | PUT | `/products/:id` | A | `ProductInput` (reemplazo completo) | `products.update` + delete/insert de opciones |
 | PATCH | `/products/:id/availability` | A | `{ isAvailable }` | `products.update({ is_available })` |
 | PATCH | `/products/:id/stock` | A | `{ stockQuantity, trackStock? }` | `products.update({ stock_quantity })` |
 | DELETE | `/products/:id` | A | — | Borra producto, opciones e imagen en R2 |
+
+`GET /products/pos` devuelve `{ data: Product[], nextOffset: number | null }`, con el mismo DTO de producto (incluye opciones). Solo incluye disponibles del negocio autorizado; búsqueda parcial sin distinguir mayúsculas en nombre/código y categoría se aplican antes de paginar. `limit` entre 1 y 16 (default 16), `offset` entero entre 0 y 1.000.000. Orden estable por `sortOrder`, `createdAt`, `id`; consulta como máximo `limit + 1` filas, sin descargar el catálogo completo ni ejecutar un conteo. `nextOffset: null` indica fin. Es paginación por desplazamiento: cambios concurrentes del catálogo pueden mover posiciones; el cliente elimina duplicados y reinicia al cambiar filtros o terminar una venta. La ruta `/products` conserva su contrato; el lector de códigos usa `?barcode=` exacto para encontrar también productos que aún no se cargaron en la grilla.
 
 ```ts
 ProductInput = {
@@ -562,7 +565,7 @@ Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (
 | businesses | 10 |
 | settings | 13 |
 | coupons | 4 |
-| catalog | 16 (15 + reorder) |
+| catalog | 17 (incluye reorder y página POS) |
 | uploads | 1 |
 | orders | 10 |
 | customers | 2 |
@@ -572,4 +575,28 @@ Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (
 | public | 5 |
 | cases | 1 |
 | refunds | 4 |
-| **Total** | **111** |
+| mercadopago | 11 (incluye webhook público) |
+| **Total** | **123** |
+
+
+## 17. Mercado Pago: conexión y QR impreso
+
+Backend: `toki-api`. Base `/v1/integrations/mercadopago`, JWT y negocio actual; sin caché. El webhook público solo acepta firma MP válida.
+
+| Método | Ruta | Permiso | Contrato |
+| --- | --- | --- | --- |
+| GET | `/integrations/mercadopago` | Miembro | `available`, `collectionEnabled`, `environment`, `status`, `sellerId`, `acceptanceMode`, `connectedAt`, `expiresAt`, `registers`. |
+| POST | `/integrations/mercadopago/connect` | Owner/admin | Devuelve `authorizationUrl`, `expiresAt`; OAuth PKCE y state de un uso. |
+| POST | `/integrations/mercadopago/complete` | Administrador iniciador | `{state, code}`; guarda credenciales cifradas. |
+| POST | `/integrations/mercadopago/refresh` | Owner/admin | Renueva credenciales y devuelve conexión. |
+| PATCH | `/integrations/mercadopago` | Owner/admin | `{acceptanceMode: "manual" | "automatic"}`; próximos cobros. |
+| POST | `/integrations/mercadopago/registers` | Owner/admin | `{posId}` numérico en string; valida vendedor, caja activa y modo integrado. 201. |
+| GET | `/integrations/mercadopago/orders/:orderId/attempts` | Miembro | Lista de intentos del pedido y ambiente, más reciente primero. |
+| POST | `/integrations/mercadopago/attempts` | Miembro | `{orderId, registerId, requestId}` UUIDs; importe del servidor. 202, intento persistido. |
+| POST | `/integrations/mercadopago/attempts/:id/check` | Miembro | 202, programa consulta. |
+| POST | `/integrations/mercadopago/attempts/:id/cancel` | Miembro | 202, solicita cancelación remota. |
+| POST | `/webhooks/mercadopago` | Firma MP | Query `data.id`, headers `x-signature`/`x-request-id` y sobre `order`; 200 después de guardar y programar consulta. |
+
+DTO de intento: `id`, `orderId`, `registerId`, `amount`, `status`, `reviewReason`, `providerOrderId`, `acceptanceMode`, `cancelRequested`, `lastCheckedAt`, `confirmedAt`, `createdAt`. Estados: `created`, `pending`, `unknown`, `paid`, `failed`, `canceled`, `expired`, `refunded`.
+
+Deshabilitado por defecto. `MP_QR_ENABLED` permite nuevos cobros; apagar ese flag conserva verificación/cancelación si la integración y el secreto siguen activos. `mercadopagoEnabled` del checkout público permanece bloqueado. El POST 202 y el webhook 200 nunca significan por sí solos pago aprobado. No se permite marcar manualmente un pago MP ni alterar importe/medio con cobro pendiente. [Configuración, garantías y límites](mercadopago.md).

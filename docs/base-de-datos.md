@@ -2,7 +2,7 @@
 
 **Motor:** PostgreSQL 17 · **Fecha:** 2026-09-17 · **Versión:** 1.0
 
-**Fuente:** réplica exacta del schema productivo de Supabase (`toki/supabase/migrations`, 27 archivos, ~3.800 líneas SQL).
+**Origen histórico:** baseline de Supabase. El esquema vigente evoluciona en `toki-api/prisma/migrations`; las migraciones de `toki/supabase` no se vuelven a aplicar.
 
 **Artefactos en el repo:**
 
@@ -303,3 +303,10 @@ grant connect on database toki to toki_app;
 | H4 | El rol `staff` existe, pero no hay flujo para invitar miembros | Ninguno | Queda para roadmap (invitaciones, como en Lamelas) |
 | H5 | `persist_order` y `create_manual_sale` comparaban el stock aunque `track_stock` fuera `false` (con `stock_quantity` en 0, el default de la tabla), y ponían `track_stock = true` al descontar | Un producto sin control de stock no se podía vender ("Stock insuficiente"), y el primero que se vendía quedaba controlando stock y se pausaba solo al llegar a cero. Hoy no se nota porque el panel activa `track_stock` siempre | Corregido en `0005` (checkout y POS) y `0007` (agente de WhatsApp). Para todo lo que ya lleva stock el comportamiento es idéntico |
 | H6 | El dump del schema no trajo los grants que Supabase da de fábrica sobre el esquema `extensions` ni el EXECUTE de `business_is_open` para `anon` | El buscador del panel (`search_dashboard`, que corre con los permisos de quien llama) y el menú público fallaban con `permission denied` | Concedidos en `0004`. Revisar grants faltantes al comparar con producción (H1) |
+
+
+## 11. Mercado Pago etapa 1
+
+La migración `0017_mercadopago_foundation` agrega conexiones, credenciales cifradas, flujos OAuth, cajas, intentos y eventos. Solo conexiones, cajas e intentos tienen lectura `authenticated` con membresía RLS. Todas las escrituras y los secretos requieren `service_role` con autorización explícita del servicio. FKs compuestas validan negocio y ambiente; índices únicos parciales reservan un único intento activo por pedido/caja. El modelo Prisma conserva las columnas; las restricciones SQL deben mantenerse en migraciones futuras. Ver [mercadopago.md](mercadopago.md).
+
+La migración `0018_mercadopago_qr` agrega identificador externo y nombre de caja, snapshot de solicitud, cola de consultas con leases, cancelación pendiente y motivo de revisión. `payments.mp_attempt_id` es único y está ligado por FK compuesta a negocio/pedido/intento. Triggers bloquean cambios de importe, confirmaciones manuales de pagos MP y cancelaciones del pedido con QR activo; el servicio de verificación realiza las escrituras autorizadas.

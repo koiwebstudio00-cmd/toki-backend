@@ -81,6 +81,14 @@ services:
       R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
       ZERNIO_API_KEY: ${ZERNIO_API_KEY:-}
       ZERNIO_BASE_URL: ${ZERNIO_BASE_URL:-https://zernio.com/api/v1}
+      MP_INTEGRATION_ENABLED: ${MP_INTEGRATION_ENABLED:-false}
+      MP_QR_ENABLED: ${MP_QR_ENABLED:-false}
+      MP_ENVIRONMENT: ${MP_ENVIRONMENT:-test}
+      MP_CLIENT_ID: ${MP_CLIENT_ID:-}
+      MP_CLIENT_SECRET: ${MP_CLIENT_SECRET:-}
+      MP_REDIRECT_URI: ${MP_REDIRECT_URI:-}
+      MP_TOKEN_ENCRYPTION_KEY: ${MP_TOKEN_ENCRYPTION_KEY:-}
+      MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
     expose:
       - "3000"
     # El dominio y el HTTPS los pone Dokploy (pestaña Domains → puerto 3000).

@@ -14,7 +14,7 @@ let _owner: PrismaClient | null = null;
 
 export function ownerDb(): PrismaClient {
   _owner ??= new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL_TEST!, max: 2 })
+    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL_TEST!, max: 2, options: '-c timezone=UTC' })
   });
   return _owner;
 }

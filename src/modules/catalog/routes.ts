@@ -6,6 +6,7 @@ import { requireAdmin, requireBusiness } from "../../middleware/business.js";
 import * as categories from "./categories.service.js";
 import * as ingredients from "./ingredients.service.js";
 import * as products from "./products.service.js";
+import * as pos from "./pos.service.js";
 import {
   availabilitySchema,
   createCategorySchema,
@@ -13,6 +14,7 @@ import {
   listCategoriesQuery,
   listIngredientsQuery,
   listProductsQuery,
+  posProductsQuery,
   productInputSchema,
   reorderCategoriesSchema,
   stockSchema,
@@ -58,6 +60,10 @@ productRoutes.use(requireAuth, requireBusiness);
 
 productRoutes.get("/", async (req, res) => {
   res.json({ data: await products.list(businessScope(req), listProductsQuery.parse(req.query)) });
+});
+
+productRoutes.get("/pos", async (req, res) => {
+  res.json(await pos.list(businessScope(req), posProductsQuery.parse(req.query)));
 });
 
 productRoutes.get("/:id", async (req, res) => {

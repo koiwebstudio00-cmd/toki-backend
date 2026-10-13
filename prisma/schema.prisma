@@ -481,6 +481,7 @@ model Payment {
   status            payment_status @default(pending)
   amount            Decimal        @db.Decimal(12, 2)
   externalPaymentId String?        @map("external_payment_id")
+  mpAttemptId       String?        @unique @map("mp_attempt_id") @db.Uuid
   metadata          Json?
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -919,5 +920,129 @@ model AgentWebhookEvent {
   id String @id
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   @@map("agent_webhook_events")
+  @@schema("public")
+}
+
+// Mercado Pago foundation. Composite FKs, RLS and partial indexes are in 0017.
+model MpConnection {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  environment String
+  sellerId String? @map("seller_id")
+  status String @default("disconnected")
+  acceptanceMode String @default("manual") @map("acceptance_mode")
+  oauthGeneration Int @default(0) @map("oauth_generation")
+  refreshStartedAt DateTime? @map("refresh_started_at") @db.Timestamptz(6)
+  connectedAt DateTime? @map("connected_at") @db.Timestamptz(6)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@unique([businessId, environment])
+  @@unique([environment, sellerId])
+  @@unique([businessId, environment, id])
+  @@map("mp_connections")
+  @@schema("public")
+}
+model MpCredential {
+  connectionId String @id @map("connection_id") @db.Uuid
+  accessTokenCiphertext String @map("access_token_ciphertext")
+  refreshTokenCiphertext String @map("refresh_token_ciphertext")
+  scope String
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@map("mp_credentials")
+  @@schema("public")
+}
+model MpOauthFlow {
+  stateHash String @id @map("state_hash")
+  businessId String @map("business_id") @db.Uuid
+  environment String
+  connectionId String @map("connection_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  generation Int
+  verifierCiphertext String @map("verifier_ciphertext")
+  redirectUri String @map("redirect_uri")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@index([expiresAt], map: "mp_oauth_flows_expiry")
+  @@index([businessId], map: "mp_oauth_flows_business")
+  @@map("mp_oauth_flows")
+  @@schema("public")
+}
+model MpRegister {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  environment String
+  connectionId String @map("connection_id") @db.Uuid
+  storeId String? @map("store_id")
+  posId String @map("pos_id")
+  externalPosId String? @map("external_pos_id")
+  name String?
+  terminalId String? @map("terminal_id")
+  channel String
+  enabled Boolean @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  @@unique([businessId, environment, connectionId, id])
+  @@unique([environment, posId])
+  @@unique([environment, terminalId])
+  @@map("mp_registers")
+  @@schema("public")
+}
+model MpPaymentAttempt {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  environment String
+  connectionId String @map("connection_id") @db.Uuid
+  registerId String @map("register_id") @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  expectedAmount Decimal @map("expected_amount") @db.Decimal(12,2)
+  currency String @default("ARS")
+  orderUpdatedAt DateTime @map("order_updated_at") @db.Timestamptz(6)
+  externalReference String @unique @map("external_reference")
+  idempotencyKey String @unique @map("idempotency_key") @db.Uuid
+  providerOrderId String? @map("provider_order_id")
+  providerPaymentId String? @map("provider_payment_id")
+  providerStatus String? @map("provider_status")
+  providerStatusDetail String? @map("provider_status_detail")
+  status String @default("created")
+  acceptanceMode String @map("acceptance_mode")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  lastCheckedAt DateTime? @map("last_checked_at") @db.Timestamptz(6)
+  requestBody Json? @map("request_body")
+  originalPaymentMethod String @default("cash") @map("original_payment_method")
+  nextCheckAt DateTime? @map("next_check_at") @db.Timestamptz(6)
+  leaseToken String? @map("lease_token") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  failureCount Int @default(0) @map("failure_count")
+  reviewReason String? @map("review_reason")
+  cancelRequested Boolean @default(false) @map("cancel_requested")
+  @@unique([connectionId, providerOrderId])
+  @@unique([connectionId, providerPaymentId])
+  @@index([businessId, createdAt], map: "mp_attempts_business_created")
+  @@map("mp_payment_attempts")
+  @@schema("public")
+}
+model MpWebhookEvent {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  environment String
+  connectionId String @map("connection_id") @db.Uuid
+  providerEventId String @map("provider_event_id")
+  resourceId String @map("resource_id")
+  action String
+  status String @default("pending")
+  attempts Int @default(0)
+  availableAt DateTime @default(now()) @map("available_at") @db.Timestamptz(6)
+  errorCode String? @map("error_code")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+  @@unique([connectionId, providerEventId])
+  @@index([status, availableAt], map: "mp_events_pending")
+  @@index([businessId], map: "mp_events_business")
+  @@map("mp_webhook_events")
   @@schema("public")
 }

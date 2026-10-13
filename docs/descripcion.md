@@ -26,9 +26,9 @@ Fuera de alcance en V1: salón, mesas, mozos, reservas, división de cuentas, co
 
 ## 2. Qué es este repo
 
-`toki-api` es el **backend propio de Toki**. Reemplaza a Supabase como backend:
+`toki-api` es el **backend operativo de Toki**, confirmado el 12/10/2026. Sustituye los servicios que antes prestaba Supabase:
 
-| Hoy (Supabase) | Con toki-api |
+| Sistema anterior | Backend vigente toki-api |
 | --- | --- |
 | Supabase Auth | Módulo `auth` propio (JWT + refresh rotativo, bcrypt, emails con Resend) |
 | PostgREST (`supabase.from(...)`) desde el navegador | Endpoints REST en Express |
@@ -39,7 +39,7 @@ Fuera de alcance en V1: salón, mesas, mozos, reservas, división de cuentas, co
 | Postgres gestionado | PostgreSQL 17 en VPS con Dokploy, backups a R2 |
 | n8n llamando a PostgREST con service key | n8n llamando a `/v1/agent/*` con API key |
 
-La base de datos **replica exactamente el schema productivo de Supabase** (28 tablas, 60 policies RLS, 28 funciones), para migrar los datos sin transformaciones. Ver `base-de-datos.md`.
+El esquema parte de un baseline de Supabase y evoluciona mediante migraciones de este repositorio. Ver `base-de-datos.md`. Las secciones de migración originales describen el traspaso histórico; el agente actual está documentado en [agente-nativo.md](agente-nativo.md) y la nueva base de pagos en [mercadopago.md](mercadopago.md).
 
 ## 3. Componentes del sistema
 

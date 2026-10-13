@@ -36,9 +36,30 @@ describe("configuración de producción", () => {
     expect(config.NODE_ENV).toBe("production");
   });
 
+  it("Mercado Pago no arranca habilitado sin secretos y URI segura", async () => {
+    prodEnv({ MP_INTEGRATION_ENABLED: "true", MP_CLIENT_ID: "123", MP_CLIENT_SECRET: "test", MP_TOKEN_ENCRYPTION_KEY: "b".repeat(64), MP_REDIRECT_URI: "http://example.com/callback" });
+    await expect(import("../src/config.js")).rejects.toThrow(/Mercado Pago/);
+    vi.resetModules();
+    prodEnv({ MP_INTEGRATION_ENABLED: "true", MP_CLIENT_ID: "123", MP_CLIENT_SECRET: "test", MP_TOKEN_ENCRYPTION_KEY: "short", MP_REDIRECT_URI: "https://example.com/callback" });
+    await expect(import("../src/config.js")).rejects.toThrow(/Mercado Pago/);
+  });
+
+  it("Mercado Pago exige configuración explícita y acepta HTTPS completo", async () => {
+    prodEnv({ MP_INTEGRATION_ENABLED: "true", MP_CLIENT_ID: "123", MP_CLIENT_SECRET: "test", MP_TOKEN_ENCRYPTION_KEY: "b".repeat(64), MP_REDIRECT_URI: "https://example.com/callback" });
+    const { config } = await import("../src/config.js");
+    expect(config.MP_INTEGRATION_ENABLED).toBe(true);
+  });
+
   it("no arranca sin DATABASE_URL", async () => {
     prodEnv({ DATABASE_URL: undefined });
     await expect(import("../src/config.js")).rejects.toThrow();
+  });
+  it("no habilita QR sin integración y secreto de webhook", async () => {
+    prodEnv({ MP_QR_ENABLED: "true", MP_INTEGRATION_ENABLED: "false", MP_WEBHOOK_SECRET: "" });
+    await expect(import("../src/config.js")).rejects.toThrow(/MP_QR_ENABLED/);
+    vi.resetModules();
+    prodEnv({ MP_QR_ENABLED: "true", MP_INTEGRATION_ENABLED: "true", MP_WEBHOOK_SECRET: "short" });
+    await expect(import("../src/config.js")).rejects.toThrow(/MP_QR_ENABLED/);
   });
 
   it("no arranca con un JWT_SECRET corto: mejor no arrancar que arrancar inseguro", async () => {

@@ -90,6 +90,15 @@ export const listProductsQuery = z.object({
   barcode: z.string().trim().max(64).optional()
 });
 
+export const posProductsQuery = z.object({
+  categoryId: uuid().optional(),
+  search: z.string().trim().max(100).optional(),
+  offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  limit: z.coerce.number().int().min(1).max(16).default(16)
+});
+
+export type PosProductsQuery = z.infer<typeof posProductsQuery>;
+
 export const availabilitySchema = z.object({ isAvailable: z.boolean() });
 export const stockSchema = z.object({
   stockQuantity: nonNegativeInt("El stock"),

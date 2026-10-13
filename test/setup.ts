@@ -10,6 +10,14 @@ process.env.OPENAI_MODEL = "";
 process.env.AI_GATEWAY_API_KEY = "";
 process.env.AI_GATEWAY_MODEL = "";
 process.env.AGENT_WORKER_ENABLED = "false";
+process.env.MP_INTEGRATION_ENABLED = "false";
+process.env.MP_QR_ENABLED = "false";
+process.env.MP_WEBHOOK_SECRET = "";
+process.env.MP_CLIENT_ID = "";
+process.env.MP_CLIENT_SECRET = "";
+process.env.MP_TOKEN_ENCRYPTION_KEY = "";
+process.env.MP_REDIRECT_URI = "";
+process.env.MP_ENVIRONMENT = "test";
 
 if (process.env.DATABASE_URL_TEST) {
   const url = new URL(process.env.DATABASE_URL_TEST);

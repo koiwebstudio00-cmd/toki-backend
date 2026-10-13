@@ -15,6 +15,8 @@ import { couponRoutes } from "./modules/coupons/routes.js";
 import { customerRoutes } from "./modules/customers/routes.js";
 import { dashboardRoutes } from "./modules/dashboard/routes.js";
 import { healthRoutes } from "./modules/health/routes.js";
+import { mercadopagoRoutes } from "./modules/mercadopago/routes.js";
+import { mercadopagoWebhookRoutes } from "./modules/mercadopago/webhook.js";
 import { orderRoutes, orderStreamRoutes, paymentProofRoutes } from "./modules/orders/routes.js";
 import { publicRoutes } from "./modules/public/routes.js";
 import { settingsRoutes } from "./modules/settings/routes.js";
@@ -42,6 +44,7 @@ export function buildApp() {
   app.use(express.json({ limit: "1mb" }));
 
   const v1 = express.Router();
+  v1.use(mercadopagoWebhookRoutes);
   v1.use(healthRoutes);
   v1.use(authRoutes);
   v1.use(accountRoutes);
@@ -50,6 +53,7 @@ export function buildApp() {
   v1.use("/businesses", onboardingRoutes);
   v1.use("/business", businessRoutes);
   v1.use("/settings", settingsRoutes);
+  v1.use("/integrations/mercadopago", mercadopagoRoutes);
   v1.use("/coupons", couponRoutes);
   v1.use("/categories", categoryRoutes);
   v1.use("/products", productRoutes);

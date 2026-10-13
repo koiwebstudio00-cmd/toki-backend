@@ -40,7 +40,7 @@ Sin red para el schema engine de Prisma (sandbox/CI): `MIGRATE_WITH=sql npm run 
 8. **Validación con Zod** en body, params y query. Mensajes al usuario en español (AR), lenguaje simple para dueños de negocios de comida.
 9. **Montos:** `Decimal` → `number` en el repo (`lib/money.ts`). Nunca devolver `Decimal`/`BigInt` en `res.json()`.
 10. **Precios nunca del cliente.** Un único cálculo de pedidos (`orders/pricing.ts`) para web y WhatsApp.
-11. **Secretos:** tokens solo hasheados en BD; nunca loguear tokens, contraseñas, API keys ni tickets. Emails fuera de transacciones.
+11. **Secretos:** tokens opacos de sesión solo hasheados en BD; credenciales OAuth de proveedores que deben reutilizarse, cifradas con clave de servidor separada y tablas sin acceso de navegador; nunca loguear tokens, contraseñas, API keys ni tickets. Emails fuera de transacciones.
 12. **Código y columnas en inglés** (heredadas de Supabase). JSON de la API en camelCase.
 13. **Contrato:** `/v1` no rompe. Si cambia una ruta, actualizar `docs/api.md`.
 

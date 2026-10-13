@@ -30,6 +30,16 @@ const envSchema = z.object({
   FRONT_URL: z.string().default("http://localhost:5173"),
 
   JWT_SECRET: z.string().default(""),
+  // Linking and QR collection are enabled separately.
+  MP_INTEGRATION_ENABLED: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
+  MP_QR_ENABLED: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
+  MP_WEBHOOK_SECRET: z.string().default(""),
+  MP_ENVIRONMENT: z.enum(["test", "production"]).default("test"),
+  MP_CLIENT_ID: z.string().trim().default(""),
+  MP_CLIENT_SECRET: z.string().default(""),
+  MP_REDIRECT_URI: z.string().default(""),
+  // 32 random bytes encoded as hex; separate from JWT_SECRET.
+  MP_TOKEN_ENCRYPTION_KEY: z.string().default(""),
   // SHA-256 (hex) de la API key que usa n8n en X-Api-Key. La key en claro nunca
   // vive en el servidor: generar con `openssl rand -hex 32` y hashear.
   AGENT_API_KEY_SHA256: z.string().default(""),
@@ -75,6 +85,24 @@ const envSchema = z.object({
 });
 
 export const config = envSchema.parse(process.env);
+
+if (config.MP_QR_ENABLED && (!config.MP_INTEGRATION_ENABLED || config.MP_WEBHOOK_SECRET.length < 16)) {
+  throw new Error("MP_QR_ENABLED requiere MP_INTEGRATION_ENABLED y MP_WEBHOOK_SECRET (mínimo 16 caracteres).");
+}
+
+if (config.MP_INTEGRATION_ENABLED) {
+  let validRedirect = false;
+  try {
+    const url = new URL(config.MP_REDIRECT_URI);
+    validRedirect = !url.username && !url.password && !url.search && !url.hash &&
+      (url.protocol === "https:" || (config.NODE_ENV !== "production" &&
+        url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname)));
+  } catch { /* reported below, without exposing configuration */ }
+  if (!/^\d+$/.test(config.MP_CLIENT_ID) || !config.MP_CLIENT_SECRET ||
+      !/^[a-fA-F0-9]{64}$/.test(config.MP_TOKEN_ENCRYPTION_KEY) || !validRedirect) {
+    throw new Error("Mercado Pago requiere MP_CLIENT_ID, MP_CLIENT_SECRET, MP_TOKEN_ENCRYPTION_KEY (64 hex) y MP_REDIRECT_URI (HTTPS; HTTP local solo en desarrollo).");
+  }
+}
 
 if (config.NODE_ENV === "production") {
   const missing: string[] = [];

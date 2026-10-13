@@ -63,6 +63,9 @@ function claimsFor(ctx: DbCtx): Record<string, unknown> {
 export async function withDb<T>(ctx: DbCtx, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return getPrisma().$transaction(
     async (tx) => {
+      // adapter-pg 6 serializes DateTime without an offset and normalizes results
+      // as UTC. Enforce UTC even when PostgreSQL runs in a local timezone.
+      await tx.$executeRawUnsafe("set local time zone 'UTC'");
       await tx.$executeRaw`select set_config('request.jwt.claims', ${JSON.stringify(claimsFor(ctx))}, true)`;
       await tx.$executeRawUnsafe(`set local role ${ROLE_SQL[ctx.role]}`);
       return fn(tx);

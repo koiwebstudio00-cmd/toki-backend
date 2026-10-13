@@ -9,7 +9,7 @@ import type { BusinessScope } from "../../lib/request.js";
 import { mapDbError } from "../../middleware/error.js";
 import type { ListProductsQuery, ProductInput } from "./schemas.js";
 
-const productInclude = {
+export const productInclude = {
   category: { select: { id: true, name: true, isActive: true } },
   options: {
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -79,7 +79,7 @@ export async function list({ ctx, businessId }: BusinessScope, q: ListProductsQu
     ...(q.categoryId ? { categoryId: q.categoryId } : {}),
     ...(q.available === undefined ? {} : { isAvailable: q.available }),
     ...(q.featured === undefined ? {} : { isFeatured: q.featured }),
-    ...(q.barcode ? { barcode: q.barcode } : {}),
+    ...(q.barcode ? { barcode: { equals: q.barcode, mode: "insensitive" } } : {}),
     ...(q.search
       ? { OR: [{ name: { contains: q.search, mode: "insensitive" } }, { barcode: { equals: q.search, mode: "insensitive" } }] }
       : {})
