@@ -132,7 +132,7 @@ describe.runIf(DB_AVAILABLE)("público", () => {
       expect(order.payments).toHaveLength(1);
 
       const burger = await db.product.findUniqueOrThrow({ where: { id: s.burgerId } });
-      expect(burger.stockQuantity).toBe(8);
+      expect(Number(burger.stockQuantity)).toBe(8);
       const panceta = await db.productOptionValue.findUniqueOrThrow({ where: { id: s.pancetaId } });
       expect(panceta.stockQuantity).toBe(2);
 
@@ -204,7 +204,7 @@ describe.runIf(DB_AVAILABLE)("público", () => {
       const soda = await db.product.findUniqueOrThrow({ where: { id: s.sodaId } });
       expect(soda.isAvailable).toBe(true);
       expect(soda.trackStock).toBe(false);
-      expect(soda.stockQuantity).toBe(0);
+      expect(Number(soda.stockQuantity)).toBe(0);
     });
 
     it("rechaza si falta una opción obligatoria", async () => {

@@ -151,11 +151,12 @@ type ProductRow = Prisma.ProductGetPayload<typeof productWithOptions>;
  * y mínimos/máximos de cada grupo de opciones.
  */
 function priceItem(product: ProductRow, item: PricingItem): PricedItem {
+  if (product.saleUnit === "kg") throw invalid("Los productos por peso se venden únicamente en el local.");
   if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 50) {
     throw invalid("Revisá las cantidades del carrito.");
   }
   // Solo cuenta el stock de lo que el negocio decidió controlar (migración 0005).
-  if (product.trackStock && product.stockQuantity < item.quantity) {
+  if (product.trackStock && toNumber(product.stockQuantity) < item.quantity) {
     throw invalid(`No hay stock suficiente de ${product.name}. Bajá la cantidad o quitá el producto.`);
   }
 

@@ -58,7 +58,7 @@ async function findActiveBusiness(tx: Tx, slug: string) {
   return business;
 }
 
-const availableProducts = { isAvailable: true, OR: [{ trackStock: false }, { stockQuantity: { gt: 0 } }] };
+const availableProducts = { saleUnit: "unit", isAvailable: true, OR: [{ trackStock: false }, { stockQuantity: { gt: 0 } }] };
 
 /**
  * Todo lo que el menú y el checkout necesitan, en una sola request: hoy el

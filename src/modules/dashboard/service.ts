@@ -64,11 +64,11 @@ export async function summary({ ctx, businessId }: BusinessScope, days: number) 
       order by g.day`;
 
     const topProducts = await tx.$queryRaw<
-      { product_id: string | null; product_name: string; quantity: bigint; total: string }[]
+      { product_id: string | null; product_name: string; quantity: string; total: string }[]
     >`
       with t as (select (now() at time zone ${zone})::date as d)
       select i.product_id, i.product_name,
-             sum(i.quantity)::bigint as quantity,
+             sum(i.quantity)::text as quantity,
              sum(i.total_price) as total
       from public.order_items i
       join public.orders o on o.id = i.order_id
@@ -143,8 +143,8 @@ export async function summary({ ctx, businessId }: BusinessScope, days: number) 
         products: lowProducts.map((p) => ({
           id: p.id,
           name: p.name,
-          stockQuantity: p.stock_quantity,
-          lowStockThreshold: p.low_stock_threshold
+          stockQuantity: Number(p.stock_quantity),
+          lowStockThreshold: Number(p.low_stock_threshold)
         })),
         optionValues: lowValues.map((v) => ({
           id: v.id,

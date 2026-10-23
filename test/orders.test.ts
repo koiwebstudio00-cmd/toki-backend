@@ -6,7 +6,7 @@ import { buildApp } from "../src/app.js";
 import { disconnectDb } from "../src/lib/db.js";
 import { emitForTests, stopListening, subscribe, subscriberCount } from "../src/lib/realtime.js";
 import { clearTickets, consumeTicket, issueTicket } from "../src/lib/tickets.js";
-import { bearer, DB_AVAILABLE, ownerDb, seedShop } from "./helpers.js";
+import { createUser, createBusiness, bearer, DB_AVAILABLE, ownerDb, seedShop } from "./helpers.js";
 
 const app = buildApp();
 
@@ -122,6 +122,81 @@ describe.runIf(DB_AVAILABLE)("pedidos", () => {
   });
 
   describe("venta presencial", () => {
+    it("cobra efectivo y entrega juntos; valida monto, aislamiento y reintentos", async () => {
+      const sale = await request(app).post("/v1/orders/manual").set(bearer(s.owner)).send({ fulfillment: "kitchen", paymentTiming: "pickup", paymentMethod: "cash", items: [{ productId: s.sodaId, quantity: 1 }] }).expect(201);
+      const id = sale.body.id;
+      const total = sale.body.total;
+      await request(app).post('/v1/orders/' + id + '/cash-delivery').set(bearer(s.owner)).send({ received: total - 1 }).expect(400);
+      const unchanged = await ownerDb().order.findUniqueOrThrow({ where: { id } });
+      expect(unchanged.status).toBe("confirmed");
+      expect(unchanged.paymentStatus).toBe("pending");
+      const other = await createUser("cash-delivery-other@example.test");
+      await createBusiness(other, "cash-delivery-other");
+      await request(app).post('/v1/orders/' + id + '/cash-delivery').set(bearer(other)).send({ received: total + 100 }).expect(404);
+      for (let i = 0; i < 2; i++) {
+        const paid = await request(app).post('/v1/orders/' + id + '/cash-delivery').set(bearer(s.staff)).send({ received: total + 100 });
+        expect(paid.status, JSON.stringify(paid.body)).toBe(200);
+        expect(paid.body.status).toBe("delivered");
+        expect(paid.body.payments[0]).toMatchObject({ cashReceived: total + 100, change: 100 });
+        expect(paid.body.paymentStatus).toBe("paid");
+      }
+      const reloaded = await request(app).get("/v1/orders/" + id).set(bearer(s.owner)).expect(200);
+      expect(reloaded.body.payments[0]).toMatchObject({ cashReceived: total + 100, change: 100 });
+      expect(reloaded.body.payments[0]).not.toHaveProperty("metadata");
+      const payments = await ownerDb().payment.findMany({ where: { orderId: id } });
+      expect(payments).toHaveLength(1);
+      expect(payments[0]!.metadata).toMatchObject({ cashReceived: total + 100, change: 100 });
+      expect(await ownerDb().orderStatusHistory.count({ where: { orderId: id, toStatus: "delivered" } })).toBe(1);
+    });
+
+    it("envía sin cobrar y permite cobrar al retirar sin duplicar pagos ni stock", async () => {
+      await ownerDb().product.update({ where: { id: s.sodaId }, data: { trackStock: true, stockQuantity: 10 } });
+      const res = await request(app).post("/v1/orders/manual").set(bearer(s.owner)).send({
+        fulfillment: "kitchen", paymentTiming: "pickup", paymentMethod: "cash",
+        items: [{ productId: s.sodaId, quantity: 1 }]
+      }).expect(201);
+      expect(res.body.status).toBe("confirmed");
+      expect(res.body.paymentStatus).toBe("pending");
+      let payments = await ownerDb().payment.findMany({ where: { orderId: res.body.id } });
+      expect(payments).toHaveLength(1);
+      expect(payments[0]!.status).toBe("pending");
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const paid = await request(app).post('/v1/orders/' + res.body.id + '/mark-paid').set(bearer(s.owner)).expect(200);
+        expect(paid.body.paymentStatus).toBe("paid");
+        expect(paid.body.status).toBe("confirmed");
+      }
+      payments = await ownerDb().payment.findMany({ where: { orderId: res.body.id } });
+      expect(payments).toHaveLength(1);
+      expect(payments[0]!.status).toBe("paid");
+      expect(Number((await ownerDb().product.findUniqueOrThrow({ where: { id: s.sodaId } })).stockQuantity)).toBe(9);
+    });
+
+    it.each([["immediate", "cash"], ["kitchen", "transfer"]])("rechaza cobro diferido incompatible: %s / %s", async (fulfillment, paymentMethod) => {
+      await request(app).post("/v1/orders/manual").set(bearer(s.owner)).send({
+        fulfillment, paymentMethod, paymentTiming: "pickup", items: [{ productId: s.sodaId, quantity: 1 }]
+      }).expect(400);
+    });
+
+    it("envía a cocina cobrado, sin historial falso de entrega y con notas", async () => {
+      const before = await ownerDb().product.update({ where: { id: s.sodaId }, data: { trackStock: true, stockQuantity: 10 } });
+      const res = await request(app).post("/v1/orders/manual").set(bearer(s.owner)).send({
+        fulfillment: "kitchen", paymentMethod: "cash",
+        items: [{ productId: s.sodaId, quantity: 1, notes: "Sin hielo" }]
+      }).expect(201);
+      expect(res.body.status).toBe("confirmed");
+      expect(res.body.paymentStatus).toBe("paid");
+      expect(res.body.items[0].notes).toBe("Sin hielo");
+      const history = await ownerDb().orderStatusHistory.findMany({ where: { orderId: res.body.id } });
+      expect(history.map(row => row.toStatus)).toEqual(["confirmed"]);
+      const after = await ownerDb().product.findUniqueOrThrow({ where: { id: s.sodaId } });
+      expect(Number(after.stockQuantity)).toBe(Number(before.stockQuantity) - 1);
+    });
+
+    it("rechaza un destino de venta desconocido", async () => {
+      await request(app).post("/v1/orders/manual").set(bearer(s.owner)).send({
+        fulfillment: "other", paymentMethod: "cash", items: [{ productId: s.sodaId, quantity: 1 }]
+      }).expect(400);
+    });
     it("crea la venta cobrada y entregada, con los precios de la base", async () => {
       const res = await request(app)
         .post("/v1/orders/manual")
@@ -129,7 +204,7 @@ describe.runIf(DB_AVAILABLE)("pedidos", () => {
         .send({
           paymentMethod: "cash",
           items: [
-            { productId: s.burgerId, quantity: 1, options: [{ optionId: s.extrasId, valueIds: [s.pancetaId] }] },
+            { productId: s.burgerId, quantity: 1, options: [{ optionId: s.puntoId, valueIds: [s.aPuntoId] }, { optionId: s.extrasId, valueIds: [s.pancetaId] }] },
             { productId: s.sodaId, quantity: 2, options: [] }
           ]
         })

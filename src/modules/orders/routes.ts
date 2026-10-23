@@ -1,9 +1,12 @@
+import { z } from "zod";
+import * as transfer from "./transfer.js";
+import { rowsBody } from "../customers/transfer.js";
 import { Router } from "express";
 import { businessScope } from "../../lib/request.js";
 import { idParams } from "../../lib/validation.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireBusiness } from "../../middleware/business.js";
-import { changeStatusSchema, listOrdersQuery, manualSaleSchema, reviewProofSchema } from "./schemas.js";
+import { cashDeliverySchema, changeStatusSchema, listOrdersQuery, manualSaleSchema, reviewProofSchema } from "./schemas.js";
 import * as svc from "./service.js";
 import { openEventStream } from "./stream.js";
 import { issueTicket } from "../../lib/tickets.js";
@@ -37,6 +40,9 @@ orderRoutes.post("/manual", async (req, res) => {
   res.status(201).json(await svc.createManualSale(businessScope(req), manualSaleSchema.parse(req.body)));
 });
 
+orderRoutes.get("/imported", async (req,res) => { res.json(await transfer.list(businessScope(req),z.coerce.number().int().min(1).default(1).parse(req.query.page))); });
+orderRoutes.get("/imported/:id", async (req,res) => { res.json(await transfer.get(businessScope(req),idParams.parse(req.params).id)); });
+orderRoutes.post("/import", async (req,res) => { const body=rowsBody.parse(req.body); res.json(await transfer.importRows(businessScope(req),body.rows,body.preview)); });
 orderRoutes.get("/:id", async (req, res) => {
   const { id } = idParams.parse(req.params);
   res.json(await svc.get(businessScope(req), id));
@@ -51,6 +57,12 @@ orderRoutes.patch("/:id/status", async (req, res) => {
 orderRoutes.post("/:id/modification-seen", async (req, res) => {
   const { id } = idParams.parse(req.params);
   res.json(await svc.markModificationSeen(businessScope(req), id));
+});
+
+orderRoutes.post("/:id/cash-delivery", async (req, res) => {
+  const { id } = idParams.parse(req.params);
+  const { received } = cashDeliverySchema.parse(req.body);
+  res.json(await svc.collectCashAndDeliver(businessScope(req), id, received));
 });
 
 orderRoutes.post("/:id/mark-paid", async (req, res) => {

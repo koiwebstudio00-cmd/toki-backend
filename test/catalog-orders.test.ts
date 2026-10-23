@@ -48,7 +48,7 @@ describe.runIf(DB_AVAILABLE)("catalog → WhatsApp → order", () => {
     expect(first.body.message).toContain("Cupón: PROMO10");
     expect(await ownerDb().order.count()).toBe(0);
     expect(await ownerDb().customer.count()).toBe(0);
-    expect((await ownerDb().product.findUniqueOrThrow({ where: { id: shop.burgerId } })).stockQuantity).toBe(10);
+    expect(Number((await ownerDb().product.findUniqueOrThrow({ where: { id: shop.burgerId } })).stockQuantity)).toBe(10);
     expect((await ownerDb().coupon.findFirstOrThrow({ where: { businessId: shop.businessId } })).usedCount).toBe(0);
   });
 

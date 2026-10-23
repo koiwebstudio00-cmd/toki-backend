@@ -31,10 +31,11 @@ const manualSaleItemSchema = z.object({
   productId: uuid("Elegí un producto de tu catálogo."),
   quantity: z.coerce
     .number({ invalid_type_error: "Revisá las cantidades." })
-    .int("Revisá las cantidades.")
-    .min(1, "La cantidad mínima es 1.")
+    .finite().multipleOf(0.001, "Usá hasta tres decimales.")
+    .min(0.001, "Ingresá una cantidad mayor a cero.")
     .max(500, "Esa cantidad es demasiado alta."),
   notes: z.string().trim().max(300, "La aclaración es demasiado larga.").nullable().optional(),
+  finalAmount: money("El importe final").optional(),
   // Solo ids: los nombres y los recargos salen de la base, nunca del cliente.
   options: z
     .array(
@@ -48,6 +49,8 @@ const manualSaleItemSchema = z.object({
 });
 
 export const manualSaleSchema = z.object({
+  fulfillment: z.enum(["immediate", "kitchen"]).default("immediate"),
+  paymentTiming: z.enum(["now", "pickup"]).default("now"),
   customerName: z.string().trim().max(120, "El nombre es demasiado largo.").nullable().optional(),
   customerPhone: z.string().trim().max(30, "Revisá el teléfono.").nullable().optional(),
   paymentMethod: z.enum(["cash", "transfer"], {
@@ -56,7 +59,7 @@ export const manualSaleSchema = z.object({
   discountTotal: money("El descuento").default(0),
   notes: z.string().trim().max(500, "La aclaración es demasiado larga.").nullable().optional(),
   items: z.array(manualSaleItemSchema).min(1, "Agregá al menos un producto.").max(100)
-});
+}).refine(input => input.paymentTiming !== "pickup" || (input.fulfillment === "kitchen" && input.paymentMethod === "cash"), { message: "El pago al retirar requiere enviar a cocina y pagar en efectivo.", path: ["paymentTiming"] });
 
 export const reviewProofSchema = z.object({
   status: z.enum(["approved", "rejected"], { errorMap: () => ({ message: "Elegí aprobar o rechazar." }) })
@@ -66,3 +69,5 @@ export type ListOrdersQuery = z.infer<typeof listOrdersQuery>;
 export type ChangeStatusInput = z.infer<typeof changeStatusSchema>;
 export type ManualSaleInput = z.infer<typeof manualSaleSchema>;
 export type ReviewProofInput = z.infer<typeof reviewProofSchema>;
+
+export const cashDeliverySchema = z.object({ received: money("El efectivo recibido") });

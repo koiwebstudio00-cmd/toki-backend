@@ -22,7 +22,7 @@ process.env.MP_ENVIRONMENT = "test";
 if (process.env.DATABASE_URL_TEST) {
   const url = new URL(process.env.DATABASE_URL_TEST);
   url.username = "toki_app";
-  url.password = "toki_app_test"; // la fija scripts/migrate-test.ts
+  url.password = process.env.DATABASE_TEST_APP_PASSWORD ?? "toki_app_test"; // la fija scripts/migrate-test.ts
   process.env.DATABASE_URL = url.toString();
 } else {
   // Sin BD de test: los tests de integración se saltean (describe.runIf).

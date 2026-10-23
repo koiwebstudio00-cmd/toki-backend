@@ -108,7 +108,7 @@ SessionBusiness = { id, name, slug, logoUrl: string | null, isActive: boolean, r
 | Método | Ruta | Auth | Body | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/me/profile` | U | — | `{ fullName, phone, avatarUrl, email }` | `AccountPage`: `profiles.select` |
-| PATCH | `/me/profile` | U | `{ fullName?, phone? }` (al menos uno; nombre 2-120; teléfono ≤ 40; `""` borra el teléfono) | Perfil actualizado | `profiles.update` |
+| PATCH | `/me/profile` | U | `{ fullName?, phone?, avatarUrl? }` (al menos uno; nombre 2-120; teléfono ≤ 40; `""` borra el teléfono) | Perfil actualizado | `profiles.update` |
 
 **Services:** `getProfile(ctx)` y `updateProfile(ctx, input)`. RLS: `profiles own select/update`.
 
@@ -368,6 +368,7 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 
 ```ts
 ManualSaleInput = {
+  fulfillment?: "immediate" | "kitchen", // immediate por defecto: entregado; kitchen: confirmado para preparar. Ambos cobrados.
   customerName?: string, customerPhone?: string,
   paymentMethod: "cash" | "transfer", discountTotal?: number,
   items: [{ productId: uuid, quantity: number, notes?: string | null,
@@ -600,3 +601,35 @@ Backend: `toki-api`. Base `/v1/integrations/mercadopago`, JWT y negocio actual; 
 DTO de intento: `id`, `orderId`, `registerId`, `amount`, `status`, `reviewReason`, `providerOrderId`, `acceptanceMode`, `cancelRequested`, `lastCheckedAt`, `confirmedAt`, `createdAt`. Estados: `created`, `pending`, `unknown`, `paid`, `failed`, `canceled`, `expired`, `refunded`.
 
 Deshabilitado por defecto. `MP_QR_ENABLED` permite nuevos cobros; apagar ese flag conserva verificación/cancelación si la integración y el secreto siguen activos. `mercadopagoEnabled` del checkout público permanece bloqueado. El POST 202 y el webhook 200 nunca significan por sí solos pago aprobado. No se permite marcar manualmente un pago MP ni alterar importe/medio con cobro pendiente. [Configuración, garantías y límites](mercadopago.md).
+
+POS: `paymentTiming` admite `now` (predeterminado) o `pickup`. `pickup` exige `fulfillment: kitchen` y `paymentMethod: cash`; crea pedido confirmado con pago pendiente y stock descontado. El cobro posterior reutiliza `POST /v1/orders/:id/mark-paid`.
+
+`POST /v1/orders/:id/cash-delivery` acepta `{ received: number }`. Solo efectivo no cancelado/reembolsado. Valida importe, cobra y entrega en una única transacción con bloqueo; guarda efectivo y vuelto en metadata del pago. Reintentos tras completar no duplican operaciones.
+
+Los pagos en efectivo cobrados con `cash-delivery` incluyen `cashReceived` y `change` en el DTO de pedidos, también al recargar. No se expone metadata completa. Pagos históricos sin estos datos omiten ambos campos.
+
+### Editar cliente desde el panel
+
+`PATCH /v1/customers/:id` requiere auth y membresía del negocio (incluye staff).
+Body: `name`, `phone`, `email` (null para borrar), `addresses` [{ id opcional, label, street, city nullable, details nullable }], `removedAddressIds` (opcional, por defecto []). Teléfono normalizado a 7–15 dígitos, único por negocio; email validado. Un id de dirección debe pertenecer al cliente y negocio. Direcciones omitidas se conservan; solo se borran ids explícitos. Contacto y direcciones se guardan en una transacción, con rollback completo ante error. Devuelve el mismo DTO que GET del perfil. 400 validación, 404 cliente/dirección ajenos o ausentes, 409 teléfono duplicado. Los snapshots de pedidos y conversaciones previas no se reescriben.
+
+### Foto personal
+
+`POST /v1/me/avatar/presign` requiere sesión, sin negocio ni rol administrador. Body: `{ contentType, size }` (JPG/PNG/WebP, 1 byte a 2 MB). Devuelve `{ uploadUrl, publicUrl, method, headers, expiresIn }`. La key `profiles/<userId>/avatar/<uuid>.<ext>` la genera el servidor y la firma vincula el tamaño declarado.
+
+Luego `PATCH /v1/me/profile` con `{ avatarUrl: publicUrl }` guarda la foto; `{ avatarUrl: null }` la quita. Solo acepta URLs propias del almacenamiento con key de avatar del usuario autenticado. Al reemplazar/quitar, limpia la imagen anterior propia después de confirmar la escritura. No modifica nombre ni teléfono cuando se envía solo avatarUrl.
+
+## Catálogo y venta por peso (0022)
+Productos: saleUnit unit (predeterminado) o kg. Stock y alerta en kg con hasta tres decimales; productos por unidad conservan enteros. Agregados disponibles para productos por unidad. Venta manual: quantity en kg y finalAmount opcional por línea de peso; servidor calcula precio original y conserva calculatedTotal, manualAdjustment y saleUnit en items. El ajuste solo se admite autenticado en venta presencial. Menú/checkout online excluyen peso en esta etapa. Aplicar migración 0022 antes de desplegar.
+
+## Importación y exportación de clientes e historial
+
+Rutas autenticadas con membresía y aislamiento del negocio:
+
+- `POST /v1/customers`: alta de cliente con direcciones.
+- `GET /v1/customers/transfer?page=1`: datos paginados para exportar.
+- `POST /v1/customers/import`: `{ rows, preview }`; vista previa sin escrituras o importación validada.
+- `POST /v1/orders/import`: `{ rows, preview }`; importa historial separado de pedidos operativos, sin stock ni cobros nuevos.
+- `GET /v1/orders/imported?page=1` y `GET /v1/orders/imported/:id`: consulta del historial importado.
+
+El frontend lee/genera CSV y XLSX. El servidor recibe filas JSON validadas; ver schemas y módulos `customers/transfer.ts` y `orders/transfer.ts` para las columnas exactas. [Alcance, migraciones y verificación del cierre](RELEASE-2026-10-23.md).

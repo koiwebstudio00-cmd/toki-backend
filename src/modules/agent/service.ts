@@ -379,6 +379,8 @@ export async function draftAddItem(i: DraftAddItemInput) {
   return withDb(systemCtx, async (tx) => {
     const product = await resolveProductRef(tx, i.businessId, i.productId);
     if (!product.ok) return product;
+    const measured = await tx.product.findFirst({ where: { id: product.id, businessId: i.businessId }, select: { saleUnit: true } });
+    if (measured?.saleUnit === "kg") return { ok: false, error: "Este producto se pesa y cobra en el local." };
     const options = await resolveOptionRefs(tx, i.businessId, i.optionValueIds);
     if (!options.ok) return options;
     const rows = await tx.$queryRaw<{ result: Json }[]>(Prisma.sql`select public.agent_draft_add_item(
@@ -406,6 +408,8 @@ export async function draftAddItems(input: DraftAddItemsInput) {
         resultados.push({ ...base, ok: false, error: product.error });
         continue;
       }
+      const measured = await tx.product.findFirst({ where: { id: product.id, businessId: input.businessId }, select: { saleUnit: true } });
+      if (measured?.saleUnit === "kg") { resultados.push({ ...base, ok: false, error: "Este producto se pesa y cobra en el local." }); continue; }
       const options = await resolveOptionRefs(tx, input.businessId, item.optionValueIds);
       if (!options.ok) {
         resultados.push({ ...base, ok: false, error: options.error });
@@ -440,7 +444,7 @@ export async function draftSetItemQuantity(businessId: string, conversationId: s
       await repo.deleteDraftItem(tx, item.id);
     } else {
       const { product } = item;
-      if (product.trackStock && product.stockQuantity < quantity) {
+      if (product.trackStock && toNumber(product.stockQuantity) < quantity) {
         return { ok: false as const, error: `Solo quedan ${product.stockQuantity} unidades de ${product.name}.` };
       }
       const short = await repo.optionValuesShort(tx, businessId, item.optionValueIds, quantity);

@@ -69,7 +69,10 @@ export function toOrderDto(o: OrderRow) {
       // El producto puede haberse borrado: el pedido conserva el nombre.
       barcode: i.product?.barcode ?? null,
       imageUrl: i.product?.imageUrl ?? null,
-      quantity: i.quantity,
+      quantity: toNumber(i.quantity),
+      saleUnit: i.saleUnit,
+      calculatedTotal: i.calculatedTotal === null ? toNumber(i.totalPrice) : toNumber(i.calculatedTotal),
+      manualAdjustment: toNumber(i.manualAdjustment),
       unitPrice: toNumber(i.unitPrice),
       totalPrice: toNumber(i.totalPrice),
       notes: i.notes,
@@ -92,6 +95,7 @@ export function toOrderDto(o: OrderRow) {
       provider: p.provider,
       status: p.status,
       amount: toNumber(p.amount),
+      ...cashReceiptFields(p),
       createdAt: p.createdAt
     }))
   };
@@ -250,6 +254,7 @@ export async function createManualSale({ ctx, businessId }: BusinessScope, input
     const items = input.items.map((item) => ({
       productId: item.productId,
       quantity: item.quantity,
+      finalAmount: item.finalAmount,
       notes: item.notes ?? null,
       options: item.options.flatMap((group) =>
         group.valueIds.map((valueId) => {
@@ -275,6 +280,8 @@ export async function createManualSale({ ctx, businessId }: BusinessScope, input
       customerName: input.customerName ?? null,
       customerPhone: input.customerPhone ?? null,
       paymentMethod: input.paymentMethod,
+      fulfillment: input.fulfillment,
+      paymentTiming: input.paymentTiming,
       discountTotal: input.discountTotal,
       notes: input.notes ?? null,
       items
@@ -330,4 +337,40 @@ export async function reviewPaymentProof(
     reviewedAt: row.reviewedAt,
     url: await presignGet("private", row.storagePath)
   };
+}
+
+/** Lock, collect and deliver atomically. Retrying a completed collection is harmless. */
+export async function collectCashAndDeliver({ ctx, businessId }: BusinessScope, id: string, received: number) {
+  return withDb(ctx, async tx => {
+    const locked = await tx.$queryRaw<{ id: string }[]>`select id from public.orders where id = ${id}::uuid and business_id = ${businessId}::uuid for update`;
+    if (!locked.length) throw notFound("El pedido no existe.");
+    const order = await tx.order.findFirstOrThrow({ where: { id, businessId } });
+    if (order.status === "cancelled" || order.paymentStatus === "refunded" || order.paymentMethod !== "cash") {
+      throw new ApiError("VALIDATION_ERROR", "Este pedido no admite cobro en efectivo.");
+    }
+    if (order.paymentStatus === "paid") {
+      if (order.status === "delivered") return reload(tx, businessId, id);
+      throw new ApiError("VALIDATION_ERROR", "El pedido ya está pagado. Actualizá el detalle antes de entregarlo.");
+    }
+    const total = toNumber(order.total);
+    if (Math.round(received * 100) < Math.round(total * 100)) throw new ApiError("VALIDATION_ERROR", "El efectivo recibido no alcanza para cubrir el total.");
+    await tx.$executeRaw`select public.mark_order_paid(${id}::uuid)`;
+    if (order.status !== "delivered") await tx.$executeRaw`select public.update_order_status(${id}::uuid, 'delivered'::public.order_status, 'Cobrado en efectivo y entregado')`;
+    const change = Math.round((received - total) * 100) / 100;
+    const payments = await tx.payment.findMany({ where: { orderId: id, businessId, provider: "cash", status: "paid" } });
+    for (const payment of payments) {
+      const metadata = payment.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata) ? payment.metadata : {};
+      await tx.payment.update({ where: { id: payment.id }, data: { metadata: { ...metadata, cashReceived: received, change } } });
+    }
+    return reload(tx, businessId, id);
+  });
+}
+
+/** Expose only receipt fields, never the provider's full metadata. */
+function cashReceiptFields(payment: OrderRow["payments"][number]) {
+  const metadata = payment.metadata;
+  if (payment.provider !== "cash" || payment.status !== "paid" || !metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  const { cashReceived, change } = metadata;
+  if (typeof cashReceived !== "number" || !Number.isFinite(cashReceived) || cashReceived < 0 || typeof change !== "number" || !Number.isFinite(change) || change < 0) return {};
+  return { cashReceived, change };
 }

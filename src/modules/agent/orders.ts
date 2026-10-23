@@ -124,8 +124,9 @@ export async function modifyOrder(input: ModifyOrderInput, options: QuoteOptions
     if (nothing) throw new Rejected("No me dijiste qué cambiar del pedido.");
 
     const changes: Changes = { added: [], removed: [], quantity: [], fields: [] };
-    const items = new Map(order.items.map((item) => [item.id, item]));
-    const newQuantity = new Map(order.items.map((item) => [item.id, item.quantity]));
+    if (order.items.some(item => item.saleUnit === "kg")) throw new Rejected("Los pedidos por peso se modifican en el local.", { derivar: true });
+    const items = new Map(order.items.map((item) => [item.id, { ...item, quantity: toNumber(item.quantity) }]));
+    const newQuantity = new Map(order.items.map((item) => [item.id, toNumber(item.quantity)]));
     const restock: { orderItemId: string; quantity: number }[] = [];
     const deduct: { productId: string | null; optionValueIds: string[]; quantity: number }[] = [];
 
@@ -160,7 +161,7 @@ export async function modifyOrder(input: ModifyOrderInput, options: QuoteOptions
       } else {
         const valueIds = item.options.map((o) => o.optionValueId).filter((id): id is string => Boolean(id));
         const [product, values] = await repo.stockFor(tx, input.businessId, item.productId, valueIds);
-        if (product?.trackStock && product.stockQuantity < diff) {
+        if (product?.trackStock && toNumber(product.stockQuantity) < diff) {
           throw new Rejected(`Solo quedan ${product.stockQuantity} unidades más de ${product.name}.`);
         }
         const shortValue = values.find((v) => v.trackStock && v.stockQuantity < diff);
@@ -241,7 +242,7 @@ export async function modifyOrder(input: ModifyOrderInput, options: QuoteOptions
       const quantity = newQuantity.get(item.id) ?? 0;
       if (quantity === 0) {
         await tx.orderItem.delete({ where: { id: item.id } });
-      } else if (quantity !== item.quantity) {
+      } else if (quantity !== toNumber(item.quantity)) {
         await tx.orderItem.update({
           where: { id: item.id },
           data: { quantity, totalPrice: money(toNumber(item.unitPrice) * quantity) }

@@ -76,7 +76,7 @@ describe.runIf(DB_AVAILABLE)("agente v3: pedidos hechos", () => {
   };
 
   const stock = async () => ({
-    burger: (await db().product.findUniqueOrThrow({ where: { id: s.burgerId } })).stockQuantity,
+    burger: Number((await db().product.findUniqueOrThrow({ where: { id: s.burgerId } })).stockQuantity),
     panceta: (await db().productOptionValue.findUniqueOrThrow({ where: { id: s.pancetaId } })).stockQuantity
   });
 
@@ -289,7 +289,8 @@ describe.runIf(DB_AVAILABLE)("agente v3: pedidos hechos", () => {
       expect((await db().product.findUniqueOrThrow({ where: { id: s.burgerId } })).isAvailable).toBe(false);
       await cancel();
       const burger = await db().product.findUniqueOrThrow({ where: { id: s.burgerId } });
-      expect(burger).toMatchObject({ stockQuantity: 1, isAvailable: true });
+      expect(Number(burger.stockQuantity)).toBe(1);
+      expect(burger.isAvailable).toBe(true);
     });
 
     it("aceptado por el local: deriva", async () => {

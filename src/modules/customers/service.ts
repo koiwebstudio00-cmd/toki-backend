@@ -8,6 +8,13 @@ import { notFound } from "../../lib/errors.js";
 import { toNumber } from "../../lib/money.js";
 import type { BusinessScope } from "../../lib/request.js";
 import type { ListCustomersQuery } from "./schemas.js";
+import type { UpdateCustomerBody } from "./schemas.js";
+import { saveCustomer } from "./repo.js";
+
+export async function update(scope: BusinessScope, id: string, body: UpdateCustomerBody) {
+  await saveCustomer(scope, id, body);
+  return get(scope, id);
+}
 
 interface CustomerAggregate {
   id: string;

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { money, nonNegativeInt, optionalText, queryBoolean, uuid } from "../../lib/validation.js";
 
+const stockAmount = z.coerce.number().finite().min(0).max(999999999).multipleOf(0.001, "Usá hasta tres decimales.");
+
 const imageUrl = z.string().trim().max(1000).nullable().optional();
 
 // ── Categorías ──────────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ const optionSchema = z
 
 export const productInputSchema = z
   .object({
+    saleUnit: z.enum(["unit", "kg"]).default("unit"),
     categoryId: uuid().nullable().optional(),
     newCategoryName: z.string().trim().min(2).max(80).optional(),
     name: z.string({ required_error: "Completá el nombre del producto." }).trim().min(2, "Completá el nombre del producto.").max(120),
@@ -74,10 +77,14 @@ export const productInputSchema = z
       .max(64, "El código de barras es demasiado largo.")
       .optional(),
     trackStock: z.boolean().default(true),
-    stockQuantity: nonNegativeInt("El stock").default(0),
-    lowStockThreshold: nonNegativeInt("La alerta de stock").default(5),
+    stockQuantity: stockAmount.default(0),
+    lowStockThreshold: stockAmount.default(5),
     sortOrder: z.coerce.number().int().min(0).max(100_000).optional(),
     options: z.array(optionSchema).max(20, "Demasiados grupos de opciones.").default([])
+  })
+  .superRefine((v, ctx) => {
+    if (v.saleUnit === "unit" && (!Number.isInteger(v.stockQuantity) || !Number.isInteger(v.lowStockThreshold))) ctx.addIssue({ code: "custom", path: ["stockQuantity"], message: "Los productos por unidad requieren stock entero." });
+    if (v.saleUnit === "kg" && v.options.length) ctx.addIssue({ code: "custom", path: ["options"], message: "Los agregados se configuran en productos por unidad." });
   })
   .refine((v) => !(v.categoryId && v.newCategoryName), { message: "Elegí una categoría o creá una nueva, no las dos.", path: ["newCategoryName"] });
 
@@ -101,7 +108,7 @@ export type PosProductsQuery = z.infer<typeof posProductsQuery>;
 
 export const availabilitySchema = z.object({ isAvailable: z.boolean() });
 export const stockSchema = z.object({
-  stockQuantity: nonNegativeInt("El stock"),
+  stockQuantity: stockAmount,
   trackStock: z.boolean().optional()
 });
 

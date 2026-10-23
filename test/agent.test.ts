@@ -345,7 +345,7 @@ describe.runIf(DB_AVAILABLE)("agente", () => {
 
       // El stock se descontó igual que en el checkout web.
       const burger = await ownerDb().product.findUniqueOrThrow({ where: { id: s.burgerId } });
-      expect(burger.stockQuantity).toBe(8);
+      expect(Number(burger.stockQuantity)).toBe(8);
     });
 
     it("confirmar dos veces devuelve el mismo pedido", async () => {

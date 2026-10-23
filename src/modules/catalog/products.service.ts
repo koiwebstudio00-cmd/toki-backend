@@ -27,6 +27,7 @@ export function toProductDto(p: ProductRow) {
     name: p.name,
     description: p.description,
     price: toNumber(p.price),
+    saleUnit: p.saleUnit,
     imageUrl: p.imageUrl,
     isAvailable: p.isAvailable,
     isFeatured: p.isFeatured,
@@ -34,9 +35,9 @@ export function toProductDto(p: ProductRow) {
     sortOrder: p.sortOrder,
     barcode: p.barcode,
     trackStock: p.trackStock,
-    stockQuantity: p.stockQuantity,
-    lowStockThreshold: p.lowStockThreshold,
-    isLowStock: p.trackStock && p.stockQuantity <= p.lowStockThreshold,
+    stockQuantity: toNumber(p.stockQuantity),
+    lowStockThreshold: toNumber(p.lowStockThreshold),
+    isLowStock: p.trackStock && toNumber(p.stockQuantity) <= toNumber(p.lowStockThreshold),
     options: p.options.map((o) => ({
       id: o.id,
       name: o.name,
@@ -118,6 +119,7 @@ function productData(input: ProductInput) {
     name: input.name,
     description: input.description ?? null,
     price: input.price,
+    saleUnit: input.saleUnit,
     imageUrl: input.imageUrl ?? null,
     isAvailable: input.isAvailable,
     isFeatured: input.isFeatured,
@@ -216,8 +218,9 @@ export async function create({ ctx, businessId }: BusinessScope, input: ProductI
 export async function replace({ ctx, businessId }: BusinessScope, id: string, input: ProductInput) {
   assertImage(input.imageUrl, businessId);
   const { previousImage, row } = await withDb(ctx, async (tx) => {
-    const current = await tx.product.findFirst({ where: { id, businessId }, select: { imageUrl: true, barcode: true, sortOrder: true } });
+    const current = await tx.product.findFirst({ where: { id, businessId }, select: { imageUrl: true, barcode: true, sortOrder: true, saleUnit: true } });
     if (!current) throw notFound("El producto no existe.");
+    if (current.saleUnit !== input.saleUnit && await tx.orderItem.count({ where: { productId: id, businessId } })) throw new ApiError("VALIDATION_ERROR", "Este producto ya tiene ventas. Creá otro producto para cambiar su unidad de venta.");
     const categoryId = await resolveCategory(tx, businessId, input);
     await tx.product.updateMany({
       where: { id, businessId },
@@ -240,6 +243,8 @@ export async function setAvailability({ ctx, businessId }: BusinessScope, id: st
 }
 
 export async function setStock({ ctx, businessId }: BusinessScope, id: string, stockQuantity: number, trackStock?: boolean) {
+  const product = await get({ ctx, businessId }, id);
+  if (product.saleUnit === "unit" && !Number.isInteger(stockQuantity)) throw new ApiError("VALIDATION_ERROR", "Usá unidades enteras.");
   return patchProduct(ctx, businessId, id, { stockQuantity, ...(trackStock === undefined ? {} : { trackStock }) });
 }
 

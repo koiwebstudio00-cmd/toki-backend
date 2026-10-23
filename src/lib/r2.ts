@@ -84,9 +84,9 @@ export function keyFromPublicUrl(url: string | null | undefined): string | null 
   return url.startsWith(base) ? url.slice(base.length) : null;
 }
 
-export async function presignPut(kind: BucketKind, key: string, contentType: string): Promise<string> {
+export async function presignPut(kind: BucketKind, key: string, contentType: string, contentLength?: number): Promise<string> {
   if (!r2Enabled) return `http://localhost:3000/dev-r2-upload/${key}?expires=${PRESIGN_TTL_SECONDS}`;
-  const cmd = new PutObjectCommand({ Bucket: bucket(kind), Key: key, ContentType: contentType });
+  const cmd = new PutObjectCommand({ Bucket: bucket(kind), Key: key, ContentType: contentType, ...(contentLength === undefined ? {} : { ContentLength: contentLength }) });
   return getSignedUrl(client(), cmd, { expiresIn: PRESIGN_TTL_SECONDS });
 }
 

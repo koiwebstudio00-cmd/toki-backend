@@ -101,7 +101,7 @@ describe.runIf(DB_AVAILABLE)("chat de prueba: API, consultas reales y aislamient
     expect(await ownerDb().order.count()).toBe(0);
     expect(await ownerDb().whatsappMessage.count()).toBe(0);
     expect(await ownerDb().whatsappOrderDraft.count()).toBe(0);
-    expect((await ownerDb().product.findUniqueOrThrow({ where: { id: shop.burgerId } })).stockQuantity).toBe(10);
+    expect(Number((await ownerDb().product.findUniqueOrThrow({ where: { id: shop.burgerId } })).stockQuantity)).toBe(10);
   });
 
   it("catálogo y FAQs excluyen otro negocio, productos ocultos y FAQs pausadas", async () => {
