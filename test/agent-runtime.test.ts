@@ -31,6 +31,14 @@ describe("proveedor del agente", () => {
     expect(configuredModel()).toMatchObject({ provider: "openai.responses" });
   });
 
+  it("no habilita el agente con una clave de ejemplo ni cambia de proveedor", () => {
+    Object.assign(config, { OPENAI_API_KEY: "tu_clave", OPENAI_MODEL: "gpt-5.4-mini", AI_GATEWAY_API_KEY: "fake-gateway-key", AI_GATEWAY_MODEL: "provider/model" });
+    expect(modelConfigured()).toBe(false);
+    expect(configuredModel).toThrow("todavía no está habilitado");
+    Object.assign(config, { OPENAI_API_KEY: "", OPENAI_MODEL: "", AI_GATEWAY_API_KEY: "<api-key>" });
+    expect(modelConfigured()).toBe(false);
+  });
+
   it("usa Responses con la clave del servidor y conserva schemas opcionales, sin almacenar respuestas", async () => {
     Object.assign(config, { OPENAI_API_KEY: "fake-openai-key", OPENAI_MODEL: "gpt-5.4-mini" });
     const fetch = vi.fn().mockResolvedValue(json({ id: "resp_test", created_at: 1, status: "completed", model: config.OPENAI_MODEL,

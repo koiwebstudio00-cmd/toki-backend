@@ -1,9 +1,10 @@
 import request from "supertest";
 import { MockLanguageModelV4 } from "ai/test";
-import { tool } from "ai";
+import { APICallError, tool } from "ai";
 import { z } from "zod";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
+import { config } from "../src/config.js";
 import { disconnectDb } from "../src/lib/db.js";
 import { advancePreviewMemory, readPreviewMemory } from "../src/modules/agent/preview-memory.js";
 import * as runtime from "../src/modules/agent/runtime.js";
@@ -71,6 +72,20 @@ describe.runIf(DB_AVAILABLE)("chat de prueba: API, consultas reales y aislamient
   beforeEach(async () => { shop = await seedShop(); });
   afterAll(async () => { await disconnectDb(); await ownerDb().$disconnect(); });
 
+  it("aporta el enlace actual del menú del negocio sin depender del mensaje del cliente", async () => {
+    const model = new MockLanguageModelV4({ doGenerate: answer("Acá tenés el menú.") });
+    useModel(model);
+    await ownerDb().business.update({ where: { id: shop.businessId }, data: { slug: "menu-preview-propio" } });
+    await request(app).post(endpoint).set(bearer(shop.owner)).send({ message: "¿Tenés el menú?" }).expect(200);
+    const prompt = JSON.stringify(model.doGenerateCalls[0]?.prompt);
+    expect(prompt).toContain(`${config.FRONT_URL.replace(/\/+$/, "")}/menu-preview-propio`);
+    await ownerDb().business.update({ where: { id: shop.businessId }, data: { slug: "menu-preview-nuevo" } });
+    await request(app).post(endpoint).set(bearer(shop.owner)).send({ message: "Pasame la carta" }).expect(200);
+    const updated = JSON.stringify(model.doGenerateCalls[1]?.prompt);
+    expect(updated).toContain(`${config.FRONT_URL.replace(/\/+$/, "")}/menu-preview-nuevo`);
+    expect(updated).not.toContain("/menu-preview-propio");
+  });
+
   it("requiere un administrador, rechaza historial fabricado y no filtra errores del proveedor", async () => {
     await request(app).post(endpoint).send({ message: "hola" }).expect(401);
     await request(app).get("/v1/settings/bot/preview").set(bearer(shop.staff)).expect(403);
@@ -81,6 +96,17 @@ describe.runIf(DB_AVAILABLE)("chat de prueba: API, consultas reales y aislamient
     expect(JSON.stringify(response.body)).not.toContain("secret-provider-key");
     useModel(new MockLanguageModelV4({ doGenerate: answer("Recuperado") }));
     await request(app).post(endpoint).set(bearer(shop.owner)).send({ message: "hola" }).expect(200);
+  });
+
+  it("explica credenciales rechazadas sin devolver secretos y permite reintentar", async () => {
+    useModel(new MockLanguageModelV4({ doGenerate: async () => {
+      throw new APICallError({ message: "Invalid secret-provider-key", url: "https://api.openai.com/v1/responses", requestBodyValues: { privatePrompt: "privado" }, statusCode: 401 });
+    } }));
+    const response = await request(app).post(endpoint).set(bearer(shop.owner)).send({ message: "Hola" }).expect(503);
+    expect(JSON.stringify(response.body)).toContain("clave del proveedor de IA fue rechazada");
+    expect(JSON.stringify(response.body)).not.toMatch(/secret-provider-key|privatePrompt/);
+    useModel(new MockLanguageModelV4({ doGenerate: answer("Hola, ya puedo responder.") }));
+    await request(app).post(endpoint).set(bearer(shop.owner)).send({ message: "Hola" }).expect(200);
   });
 
   it("lee precios y opciones actuales, conserva contexto y no escribe datos operativos", async () => {

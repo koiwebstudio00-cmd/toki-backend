@@ -41,6 +41,12 @@ Se conservan las variables habituales de Toki (`DATABASE_URL`, `DATABASE_URL_MIG
 
 El worker requiere un proceso Node persistente (Dokploy/Docker actual). No usar el arranque en una función efímera. Configurar un período de cierre del contenedor de al menos 60 segundos; SIGTERM detiene nuevos trabajos, cancela el modelo y espera tareas activas antes de cerrar la BD. Una caída forzada deja registros recuperables.
 
+### Si el chat devuelve 503
+
+Una clave de ejemplo como `tu_clave` no habilita el agente. Configurá una clave real en `OPENAI_API_KEY` del archivo `toki-backend/.env`, mantené `OPENAI_MODEL` configurado y reiniciá la API. No publiques ni pegues la clave en chats, logs o variables `VITE_*`.
+
+Si el proveedor rechaza una clave con HTTP 401, el panel indica que hay que revisar la clave del servidor; la API mantiene HTTP 503 porque la sesión del usuario de Toki sigue siendo válida. Nunca devuelve el error crudo del proveedor, que podría incluir credenciales. Una clave presente no garantiza permisos, saldo o disponibilidad del modelo: validar con una consulta real después de configurarla.
+
 ## Activación y regreso al flujo anterior
 
 1. Aplicar migraciones `0013` a `0016` con el procedimiento normal de despliegue. Las tablas internas tienen RLS y acceso exclusivo de `service_role`; las rutas del panel exigen owner/admin y validan membresía y negocio.
@@ -98,3 +104,31 @@ Con `gpt-5.4-mini`, la ruta real del preview devolvió HTTP 200 al consultar el 
 Las pruebas automáticas eliminan las credenciales de IA heredadas del `.env` y desactivan el worker; solo las verificaciones manuales anteriores usaron OpenAI real. Se verificaron selección de proveedor, configuración parcial, ausencia de fallback, schemas opcionales, transcripción, cancelación y recorrido del audio verificado desde el worker. Un timeout transitorio en la primera corrida se verificó aisladamente; la segunda suite completa aprobó las 394 pruebas.
 
 Referencias de implementación: [proveedor OpenAI de AI SDK](https://ai-sdk.dev/providers/ai-sdk-providers/openai), [GPT-5.4 mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini), [transcripción de archivos](https://developers.openai.com/api/docs/guides/speech-to-text).
+
+### Alcance, formato y revisión del 27 de octubre de 2026
+
+El prompt compartido por preview y agente nativo limita la conversación a la atención del negocio, incluyendo asesoramiento sobre sus productos. Permite saludos; redirige consultas ajenas sin responderlas primero y resuelve solo la parte comercial de mensajes mixtos. Los cambios de rol, las preferencias del negocio, el historial y las instrucciones incrustadas en FAQs no pueden ampliar ese alcance. No se bloquean palabras aisladas: el asesoramiento técnico puede corresponder al rubro real.
+
+Las respuestas usan párrafos cortos, listas con guiones y negritas de WhatsApp con un solo asterisco a cada lado (`*texto*`), sin negritas Markdown dobles, tablas ni HTML. El preview interpreta únicamente ese énfasis mediante nodos React `<strong>` y conserva el resto como texto. Esto no agrega streaming: la UI conserva el indicador de espera y muestra la respuesta completa. React presenta el contenido como texto, sin interpretar HTML del modelo. El estado `is_open`, la hora local y `manual_status` prevalecen sobre afirmaciones del cliente y horarios habituales; no debe inventarse el motivo de un cierre.
+
+La protección de datos y operaciones sigue en servidor: sesión y rol de administrador para preview, negocio fijado por sesión y RLS, herramientas de consulta cerradas, validación de entradas, memoria firmada ligada a usuario/negocio, límites de turnos/tiempo/consultas y errores del proveedor saneados. El prompt restringe comportamiento, pero no constituye una garantía contra todas las inyecciones. No introducir secretos en prompts o resultados de herramientas. Esta revisión no sustituye una auditoría de toda la plataforma ni valida envíos reales de WhatsApp.
+
+Verificación local con proveedor real: seis mensajes consecutivos por la API del preview devolvieron HTTP 200. Consultó precios, redirigió «sabés qué es console.log», rechazó revelar prompt/clave, respondió solo el precio en una consulta mezclada con código, explicó el cierre manual y rechazó confirmar o marcar pagado un pedido en preview. Tres casos sintéticos adicionales comprobaron una FAQ con una orden maliciosa, una preferencia comercial que intentaba convertirlo en profesor de programación y asesoramiento legítimo de un vivero. No se modificaron las FAQs/configuraciones del negocio ni se crearon pedidos para estas evaluaciones. Repetir estos casos al cambiar modelo o instrucciones: el comportamiento del modelo es probabilístico.
+
+Backend: build, typecheck y lint aprobados; 476 tests en 31 archivos aprobados, incluyendo aislamiento, permisos, memoria y herramientas. Las evaluaciones con proveedor real son manuales y separadas de esa suite.
+
+Referencias consultadas: [Prompt engineering de OpenAI](https://developers.openai.com/api/docs/guides/prompt-engineering) y [Safety best practices](https://developers.openai.com/api/docs/guides/safety-best-practices): instrucciones explícitas, ejemplos y pruebas adversariales complementan los controles del servidor.
+
+Formato contrastado con el [centro de ayuda de WhatsApp](https://faq.whatsapp.com/539178204879377/). El renderer del preview tiene pruebas de negritas, marcadores incompletos, listas, cálculos y escape de HTML.
+
+### Respuestas breves y acceso al menú
+
+El prompt compartido usa voseo argentino y respuestas de una o dos frases por defecto, sin cierres automáticos con «si querés», ofertas ni recomendaciones no solicitadas. Puede extenderse para resolver una consulta detallada, pedir datos necesarios o presentar el resumen de una operación. El tono formal conserva el voseo respetuoso; no exige frases prefabricadas ni jerga.
+
+Ante consultas generales por menú, carta, catálogo o qué hay para pedir, envía `business.menu_url` con una introducción breve, sin listar todos los productos. El servidor construye ese enlace desde `FRONT_URL` y el slug actual del negocio tanto en preview como en el contexto nativo. No se acepta un enlace proporcionado por el cliente o una FAQ como sustituto del enlace de Toki. Consultas específicas se responden con los datos pertinentes; si el cliente pide opciones por chat o no puede abrir el enlace, se consulta el catálogo. Sin enlace disponible, se responde desde el catálogo sin inventar una URL.
+
+Al evaluar cambios, comprobar: solicitud general del menú (link correcto), precio concreto (respuesta directa), agradecimiento (sin oferta), consulta ajena (límite breve) y solicitud explícita de opciones por chat (catálogo). La suite verifica que el preview recibe el enlace del negocio y que un cambio de slug se refleja en el turno siguiente.
+
+### Revisión del 28/10/2026
+
+Se comprobó en el chat de prueba una respuesta real al menú con su URL actual y una respuesta breve a `console.log`: «Por acá atiendo consultas del local.». Los enlaces del preview usan HTTP(S), abren otra pestaña con `noopener noreferrer` y el texto se renderiza sin HTML. La suite de preview cubre credenciales rechazadas sin exponer secretos y conserva aislamiento y herramientas de solo lectura. Esta comprobación de comportamiento no implica inmunidad ante todas las variantes de prompt injection; los permisos siguen impuestos por el servidor.

@@ -19,7 +19,7 @@ export async function previewSchedule(tx: Tx, businessId: string, localDate: str
 
 export function previewBusiness(tx: Tx, businessId: string) {
   return tx.business.findFirst({ where: { id: businessId, isActive: true }, select: {
-    name: true, description: true, address: true, city: true, phone: true, currency: true,
+    name: true, slug: true, description: true, address: true, city: true, phone: true, currency: true,
     minimumOrderAmount: true, deliveryFee: true, estimatedDeliveryMinutes: true
   } });
 }

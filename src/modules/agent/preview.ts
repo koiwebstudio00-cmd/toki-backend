@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { tool } from "ai";
+import { APICallError, tool } from "ai";
 import { z } from "zod";
+import { config } from "../../config.js";
 import { withDb } from "../../lib/db.js";
 import { ApiError, notFound } from "../../lib/errors.js";
 import type { BusinessScope } from "../../lib/request.js";
@@ -62,7 +63,7 @@ export async function previewMessage(scope: BusinessScope, input: { message: str
       if (!business) throw notFound("El negocio no está disponible.");
       const current = await clock(tx, scope.businessId);
       const schedule = current ? await repo.previewSchedule(tx, scope.businessId, current.now_local.slice(0, 10)) : null;
-      return { business, current, schedule };
+      return { business: { ...business, menu_url: `${config.FRONT_URL.replace(/\/+$/, "")}/${business.slug}` }, current, schedule };
     });
     const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(abortSignal ? [abortSignal] : [])]);
     // La pausa de WhatsApp no impide al dueño probar su configuración.
@@ -73,6 +74,9 @@ export async function previewMessage(scope: BusinessScope, input: { message: str
       result = await generateAgentTurn({ model, instructions, messages: [...memory.messages, { role: "user", content: input.message }], tools: previewTools(scope, signal), abortSignal: signal });
     } catch (error) {
       if (error instanceof ApiError) throw error;
+      if (APICallError.isInstance(error) && error.statusCode === 401) {
+        throw new ApiError("SERVICE_UNAVAILABLE", "La clave del proveedor de IA fue rechazada. Revisá la clave configurada en el servidor y reiniciá la API.");
+      }
       // No devolver errores del proveedor: pueden contener prompts o credenciales.
       throw new ApiError("SERVICE_UNAVAILABLE", "No pudimos obtener una respuesta del asistente. Intentá de nuevo.");
     }
