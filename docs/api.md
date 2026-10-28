@@ -633,3 +633,19 @@ Rutas autenticadas con membresía y aislamiento del negocio:
 - `GET /v1/orders/imported?page=1` y `GET /v1/orders/imported/:id`: consulta del historial importado.
 
 El frontend lee/genera CSV y XLSX. El servidor recibe filas JSON validadas; ver schemas y módulos `customers/transfer.ts` y `orders/transfer.ts` para las columnas exactas. [Alcance, migraciones y verificación del cierre](RELEASE-2026-10-23.md).
+
+## Apariencia del menú (2026-10-28)
+
+| Método | Ruta | Auth | Body | Respuesta |
+| --- | --- | --- | --- | --- |
+| GET | `/v1/business/menu-appearance` | M | — | `AppearanceSnapshot` |
+| PUT | `/v1/business/menu-appearance/draft` | A | `{ revision, settings: Appearance }` | `AppearanceSnapshot` |
+| POST | `/v1/business/menu-appearance/publish` | A | `{ revision }` | `AppearanceSnapshot` |
+
+`Appearance = { layout: "visual" | "compact" | "categories", color: "orange" | "green" | "blue", background: "white" | "warm", descriptions: boolean, cover: boolean, featured: boolean }`.
+
+`AppearanceSnapshot = { draft: Appearance, published: Appearance, revision: number, updatedAt: string | null, publishedAt: string | null }`. Defaults: Visual, naranja, cálido, descripciones y destacados activos, portada inactiva. Antes del primer guardado la revisión es 0. Cada guardado y publicación incrementa la revisión; una revisión desactualizada devuelve 409 sin modificar datos. Publicar requiere revisión positiva y copia el borrador guardado atómicamente; no acepta configuración en el body. Layouts, paletas y campos son listas cerradas; no se acepta CSS/HTML arbitrario.
+
+`GET /v1/public/businesses/:slug` agrega `business.menuAppearance` (solo publicado) y `business.manualStatus`. El borrador está en tabla privada `menu_appearance_drafts`, sin acceso de `anon`, con RLS de miembros/administradores. Migración: `0023_menu_appearance`. Pruebas: `test/menu-appearance.test.ts`.
+
+El frontend usa esa apariencia publicada en menú, producto, carrito, checkout y seguimiento. Guardar un borrador no altera esas pantallas públicas ni el contenido del pedido; la ruta de seguimiento mantiene su contrato y se consulta junto con el menú público para obtener identidad, moneda y apariencia.

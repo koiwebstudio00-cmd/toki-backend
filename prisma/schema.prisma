@@ -150,6 +150,8 @@ model BusinessSpecialHour {
 }
 
 model Business {
+  menuAppearance            Json?                    @map("menu_appearance")
+  menuAppearanceDraft       MenuAppearanceDraft?
   importedOrders            ImportedOrder[]
   agentActions              AgentAction[]
   id                        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1065,5 +1067,17 @@ model ImportedOrder {
   @@unique([businessId, externalId], map: "imported_orders_business_id_external_id_key")
   @@index([businessId, orderedAt(sort: Desc), id], map: "imported_orders_business_date")
   @@map("imported_orders")
+  @@schema("public")
+}
+
+model MenuAppearanceDraft {
+  businessId String @id @map("business_id") @db.Uuid
+  settings Json
+  revision Int @default(0)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("menu_appearance_drafts")
   @@schema("public")
 }

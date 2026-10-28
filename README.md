@@ -1,5 +1,7 @@
 # toki-api
 
+Carpeta local: `toki-backend`. Rama de trabajo: `dev`. El package y servicio se llaman `toki-api`.
+
 Backend de Toki: Express + Prisma + PostgreSQL 17, desplegado con Dokploy.
 
 ## Arrancar en tu compu
@@ -12,7 +14,7 @@ Resumen para quien ya tiene Postgres 17 andando:
 npm install                     # corre prisma generate
 cp .env.example .env            # poner tu usuario de Postgres en las URLs de migrate y test
 createdb toki && createdb toki_test
-npm run db:migrate:deploy       # crea toki_app y aplica 0001–0003
+npm run db:migrate:deploy       # crea toki_app y aplica las migraciones pendientes (actualmente 0001–0023)
 npm run seed                    # 2 negocios demo (owner@burger.test / toki12345)
 npm run dev                     # http://localhost:3000/v1/health
 npm run test:prepare && npm test
@@ -43,3 +45,7 @@ Cada fase tiene su documento en [`docs/fases/`](docs/fases/) con los resultados 
 ---
 
 Koi Studio
+
+## Apariencia del menú
+
+La migración `0023_menu_appearance` y el módulo `src/modules/menu-appearance` permiten guardar un borrador privado y publicar la apariencia por negocio. El endpoint público entrega únicamente lo publicado; menú, producto, carrito, checkout y seguimiento usan esa misma configuración en el frontend. Ver [contrato de apariencia](docs/api.md#apariencia-del-menú-2026-10-28).

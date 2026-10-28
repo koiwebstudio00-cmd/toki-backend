@@ -1,3 +1,4 @@
+import { readAppearance } from "../menu-appearance/schemas.js";
 // Menú público, cupón, checkout y seguimiento — docs/api.md §13.
 //
 // Contextos: las lecturas van como `anon` (las policies públicas ya filtran
@@ -99,6 +100,8 @@ export async function getMenu(slug: string) {
         description: business.description,
         logoUrl: business.logoUrl,
         coverUrl: business.coverUrl,
+        menuAppearance: readAppearance(business.menuAppearance),
+        manualStatus: business.manualStatus,
         phone: business.phone,
         whatsappPhone: business.whatsappPhone,
         address: business.address,

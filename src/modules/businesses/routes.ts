@@ -1,3 +1,5 @@
+import * as appearance from "../menu-appearance/service.js";
+import { saveAppearanceSchema, publishAppearanceSchema } from "../menu-appearance/schemas.js";
 import { Router } from "express";
 import { businessScope, userCtx } from "../../lib/request.js";
 import { idParams } from "../../lib/validation.js";
@@ -65,4 +67,14 @@ businessRoutes.delete("/special-hours/:id", requireAdmin, async (req, res) => {
 
 businessRoutes.get("/checklist", async (req, res) => {
   res.json(await svc.getChecklist(businessScope(req)));
+});
+
+businessRoutes.get("/menu-appearance", async (req, res) => {
+  res.json(await appearance.get(businessScope(req)));
+});
+businessRoutes.put("/menu-appearance/draft", requireAdmin, async (req, res) => {
+  res.json(await appearance.save(businessScope(req), saveAppearanceSchema.parse(req.body)));
+});
+businessRoutes.post("/menu-appearance/publish", requireAdmin, async (req, res) => {
+  res.json(await appearance.publish(businessScope(req), publishAppearanceSchema.parse(req.body).revision));
 });
