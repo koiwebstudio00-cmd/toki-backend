@@ -4,20 +4,22 @@
 // (en la Mac: postgresql://dev0@localhost:5432/toki_test).
 import "dotenv/config";
 import { applyMigrations, ensureAppRole, grantAppRole, withClient } from "./lib/db-admin.js";
+import { testDatabaseConfig, TEST_APP_ROLE } from "./lib/test-database.js";
 
-const TEST_APP_PASSWORD = "toki_app_test";
-
-const testUrl = process.env.DATABASE_URL_TEST;
-if (!testUrl) throw new Error("Falta DATABASE_URL_TEST en .env");
-
-const url = new URL(testUrl);
-const dbName = url.pathname.replace(/^\//, "");
-if (!/_test$/.test(dbName)) {
-  throw new Error(`Por seguridad la BD de test tiene que terminar en _test (recibido: ${dbName}).`);
-}
+const { ownerUrl: testUrl, runtimeUrl, database: dbName, password } = testDatabaseConfig(process.env);
 
 const maintenance = new URL(testUrl);
 maintenance.pathname = "/postgres";
+
+await ensureAppRole(maintenance.toString(), password, TEST_APP_ROLE, true);
+// Check existing credentials BEFORE dropping the test database. No password reset.
+const probe = new URL(runtimeUrl);
+probe.pathname = "/postgres";
+try {
+  await withClient(probe.toString(), async (c) => { await c.query("select 1"); });
+} catch {
+  throw new Error("No se pudo conectar con toki_test_app. Revisá DATABASE_TEST_APP_PASSWORD y el acceso a postgres; no se recreó la BD ni se cambió la contraseña existente.");
+}
 
 await withClient(maintenance.toString(), async (c) => {
   await c.query(`drop database if exists "${dbName}" with (force)`);
@@ -25,7 +27,6 @@ await withClient(maintenance.toString(), async (c) => {
 });
 console.log(`[test:prepare] BD ${dbName} recreada.`);
 
-await ensureAppRole(testUrl, TEST_APP_PASSWORD);
 await applyMigrations(testUrl);
-await grantAppRole(testUrl);
+await grantAppRole(testUrl, TEST_APP_ROLE);
 console.log("[test:prepare] Migraciones aplicadas. Listo para npm test.");

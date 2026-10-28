@@ -6,6 +6,9 @@ import { disconnectDb, withDb } from "../src/lib/db.js";
 import { hashPassword } from "../src/lib/passwords.js";
 
 if (process.env.NODE_ENV === "production") throw new Error("El seed no se corre en producción.");
+if (!["localhost", "127.0.0.1", "[::1]"].includes(new URL(process.env.DATABASE_URL || "").hostname)) {
+  throw new Error("El seed requiere una DATABASE_URL local; no modifica bases remotas.");
+}
 
 const PASSWORD = "toki12345";
 

@@ -2,11 +2,11 @@
 
 Guía para arrancar el proyecto completo en una máquina nueva: la API con su base de datos local y el front. Tarda unos 20 minutos.
 
-**Necesitás:** Node 22 o superior, PostgreSQL 17, Git y acceso a los repos privados de `koiwebstudio00-cmd` en GitHub. No hace falta Docker ni Supabase.
+**Necesitás:** Node 22 o superior, PostgreSQL 17, Git y acceso a los repos privados de `koiwebstudio00-cmd` en GitHub. No hace falta Docker ni Supabase. La carpeta es `toki-backend`; el package y servicio mantienen el nombre `toki-api`.
 
 | Repo en GitHub | Carpeta local | Qué es |
 | --- | --- | --- |
-| `toki-backend` | `toki-api` | API (Express + Prisma + PostgreSQL) |
+| `toki-backend` | `toki-backend` | API (Express + Prisma + PostgreSQL) |
 | `toki` | `toki` | Front (React + Vite): panel del negocio y menú público |
 | `toki-agents` | `toki-agents` | Workflows de n8n, prompts y pruebas del agente de WhatsApp |
 
@@ -50,15 +50,15 @@ Los tres van dentro de una misma carpeta:
 
 ```bash
 mkdir toki-platform && cd toki-platform
-git clone https://github.com/koiwebstudio00-cmd/toki-backend.git toki-api
+git clone https://github.com/koiwebstudio00-cmd/toki-backend.git
 git clone https://github.com/koiwebstudio00-cmd/toki.git
 git clone https://github.com/koiwebstudio00-cmd/toki-agents.git
 ```
 
-**Rama de trabajo (octubre de 2026): `agente-v3`** en los tres. Cuando se mergee a `main`, este paso sobra:
+**Rama de trabajo: `dev`**. Si un repo no publica `origin/dev`, crear la rama local desde `main` con `git switch -c dev`.
 
 ```bash
-for d in toki-api toki toki-agents; do (cd $d && git checkout agente-v3); done
+for d in toki-backend toki toki-agents; do (cd "$d" && git switch dev); done
 ```
 
 Para solo levantar la API y el front, `toki-agents` no hace falta.
@@ -77,7 +77,7 @@ En Windows, si `createdb` pide usuario: `createdb -U postgres toki`.
 ## 4. Configurar la API
 
 ```bash
-cd toki-api
+cd toki-backend
 npm install
 cp .env.example .env
 ```
@@ -119,6 +119,17 @@ El seed crea dos cuentas, las dos con la contraseña `toki12345`:
 - `owner@burger.test` → Toki Demo Burger (`toki-demo`)
 - `owner@pizza.test` → Pizzería Demo (`pizzeria-demo`)
 
+### Poblar escenarios completos
+
+El seed básico crea usuarios y catálogo mínimo; no crea pedidos. Desde `toki`:
+
+```bash
+npm run seed:catalog   # 18 productos: unidad, peso y agregados
+npm run seed:debug     # 20 productos, 6 clientes, 14 pedidos y 6 conversaciones
+```
+
+Los 14 pedidos del lote de debug quedan fechados hoy en cada ejecución, incluidos los ya existentes; no se repiten ventas ni descuentos de stock. Solo se actualizan fechas de ese lote. Ver [seed debug](../../toki/docs/SEED-DEBUG.md) y [catálogo](../../toki/docs/CATALOG-SEED.md). Los tres seeds requieren una base local y rechazan producción.
+
 ## 6. Levantar la API
 
 ```bash
@@ -159,7 +170,7 @@ En ese `.env` dejá:
 VITE_API_URL=http://localhost:3000
 ```
 
-**Sin `VITE_API_URL` el front arranca en modo demo**, con datos falsos y sin hablar con la API. Las demás variables del ejemplo son de versiones anteriores y el código ya no las lee.
+**Sin `VITE_API_URL` el front arranca en modo demo**, con datos falsos y sin hablar con la API. `VITE_APP_URL` define la URL pública del frontend; los secretos van exclusivamente en el backend.
 
 ```bash
 npm run dev                 # http://localhost:5173
@@ -182,12 +193,16 @@ npm run lint && npm run build
 ## 8. Correr los tests de la API
 
 ```bash
-cd toki-platform/toki-api
+cd toki-platform/toki-backend
 npm run test:prepare   # recrea toki_test desde cero
 npm test
 ```
 
 `test:prepare` se corre una vez, y de nuevo cada vez que aparece una migración nueva.
+
+La conexión de pruebas usa el rol exclusivo `toki_test_app` con `NOINHERIT` y los mismos roles de contexto que la API. `DATABASE_URL_TEST` sigue usando el dueño para preparar y limpiar datos. `DATABASE_TEST_APP_PASSWORD` (predeterminado: `toki_app_test`) se comparte entre preparación y suite; solo se usa para crear el rol si no existe. Si ya existe, se verifica la conexión antes de borrar la base y nunca se cambia su contraseña. No se modifica la contraseña de `toki_app`.
+
+La preparación y la suite rechazan producción, nombres inválidos o sin sufijo `_test`, y una base con el mismo nombre que `DATABASE_URL`, `DATABASE_URL_MIGRATE` o `DATABASE_URL_LISTEN`, incluso con otro alias de host. La suite apunta también su conexión de tiempo real a la base de pruebas. Sin `DATABASE_URL_TEST`, ambas conexiones se reemplazan por un destino inalcanzable y nunca conservan las de desarrollo. Se rechazan parámetros de URL que sustituyan usuario, contraseña, destino o configuración de sesión; opciones TLS como `sslmode` se conservan. `test:prepare` borra solamente la base indicada en `DATABASE_URL_TEST`; no usarla para guardar datos que quieras conservar.
 
 Antes de dar por terminada una tarea:
 
@@ -211,22 +226,22 @@ Las pruebas del agente están en `toki-agents/tests` (ver su `README.md`).
 
 | Comando | Dónde | Para qué |
 | --- | --- | --- |
-| `npm run dev` | `toki-api` | API con recarga automática |
+| `npm run dev` | `toki-backend` | API con recarga automática |
 | `npm run dev` | `toki` | Front con recarga automática |
-| `npm test` / `npm run test:watch` | `toki-api` | Tests |
-| `npm run test:prepare` | `toki-api` | Recrear la base de tests |
-| `npm run db:migrate:deploy` | `toki-api` | Aplicar migraciones nuevas a tu base local |
-| `npm run db:migrate:create -- --name mi_cambio` | `toki-api` | Crear una migración (**revisá el SQL antes de aplicarla**) |
-| `npm run seed` | `toki-api` | Recargar los negocios de ejemplo (no pisa lo que ya existe) |
-| `npx prisma studio` | `toki-api` | Ver la base en el navegador |
+| `npm test` / `npm run test:watch` | `toki-backend` | Tests |
+| `npm run test:prepare` | `toki-backend` | Recrear la base de tests |
+| `npm run db:migrate:deploy` | `toki-backend` | Aplicar migraciones nuevas a tu base local |
+| `npm run db:migrate:create -- --name mi_cambio` | `toki-backend` | Crear una migración (**revisá el SQL antes de aplicarla**) |
+| `npm run seed` | `toki-backend` | Recargar los negocios de ejemplo (no pisa lo que ya existe) |
+| `npx prisma studio` | `toki-backend` | Ver la base en el navegador |
 
 ## Después de traer cambios
 
 ```bash
 git pull
 npm install                 # si cambió package.json
-npm run db:migrate:deploy   # en toki-api, si hay migraciones nuevas
-npm run test:prepare        # en toki-api, antes de volver a correr los tests
+npm run db:migrate:deploy   # en toki-backend, si hay migraciones nuevas
+npm run test:prepare        # en toki-backend, antes de volver a correr los tests
 ```
 
 ## Empezar de cero
@@ -248,6 +263,7 @@ npm run db:migrate:deploy && npm run seed
 | `connection refused` en el puerto 5432 | Postgres apagado | macOS: `brew services start postgresql@17`. Linux: `sudo systemctl start postgresql` |
 | `role "dev0" does not exist` | El usuario del `.env` no existe en esta máquina | Poné tu usuario (`whoami`) o `postgres` en `DATABASE_URL_MIGRATE` y `DATABASE_URL_TEST` |
 | `Por seguridad la BD de test tiene que terminar en _test` | `DATABASE_URL_TEST` apunta a otra base | Apuntala a `toki_test` (esa base se borra y se recrea) |
+| No se pudo conectar con toki_test_app | Contraseña existente distinta o falta acceso a la base postgres | Configurá DATABASE_TEST_APP_PASSWORD con la contraseña del rol de pruebas y verificá su acceso; no cambies toki_app |
 | Falla bajar los binarios de Prisma | Sin internet o red bloqueada | `MIGRATE_WITH=sql npm run db:migrate:deploy` aplica el SQL directo |
 | Los tests fallan después de traer cambios | Hay migraciones nuevas | `npm run test:prepare` |
 | El front muestra datos que no son los tuyos | Está en modo demo | Falta `VITE_API_URL` en `toki/.env`; reiniciá `npm run dev` después de cambiarlo |
@@ -271,3 +287,7 @@ docs/                      descripción, arquitectura, API, base de datos, plane
 ```
 
 **Antes de escribir código, leé `CLAUDE.md`** (reglas del proyecto) y, según la tarea, `docs/api.md` y `docs/arquitectura.md`.
+
+## Revisión de aislamiento (28/10/2026)
+
+Se ejecutó `test:prepare` contra la base de tests configurada, comparando antes y después los contadores de desarrollo y las contraseñas de los roles existentes: sin cambios. Los seeds básico, catálogo y debug se ejecutaron dos veces únicamente sobre esa base aislada. Se verificaron 14 pedidos con fecha actual, idempotencia de registros/stock/estados/importes y coherencia de reembolsos completados. La suite completa finalizó con 490 pruebas aprobadas, además de lint, typecheck y build.

@@ -2,7 +2,7 @@
 
 **Motor:** PostgreSQL 17 · **Fecha:** 2026-09-17 · **Versión:** 1.0
 
-**Origen histórico:** baseline de Supabase. El esquema vigente evoluciona en `toki-api/prisma/migrations`; las migraciones de `toki/supabase` no se vuelven a aplicar.
+**Origen histórico:** baseline de Supabase. El esquema vigente evoluciona en `toki-backend/prisma/migrations`; las migraciones de `toki/supabase` no se vuelven a aplicar.
 
 **Artefactos en el repo:**
 

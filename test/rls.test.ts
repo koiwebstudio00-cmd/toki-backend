@@ -1,5 +1,5 @@
 // Aislamiento multi-tenant: docs/base-de-datos.md §6 y docs/arquitectura.md §5.
-// Todo corre por withDb con la conexión toki_app, igual que en producción.
+// Todo corre por withDb con la conexión toki_test_app, igual que en producción.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { disconnectDb, getPrisma, withDb } from "../src/lib/db.js";
 import { mapDbError } from "../src/middleware/error.js";
@@ -17,7 +17,7 @@ describe.runIf(DB_AVAILABLE)("RLS y contextos de BD", () => {
     await ownerDb().$disconnect();
   });
 
-  it("sin contexto, toki_app no puede leer tablas", async () => {
+  it("sin contexto, toki_test_app no puede leer tablas", async () => {
     await expect(getPrisma().order.count()).rejects.toThrow(/permission denied/i);
   });
 
@@ -32,7 +32,7 @@ describe.runIf(DB_AVAILABLE)("RLS y contextos de BD", () => {
     await withDb(authCtx(s.ownerA), (tx) => tx.botSettings.count());
     const rows = await getPrisma().$queryRaw<{ role: string; claims: string | null }[]>`
       select current_user::text as role, nullif(current_setting('request.jwt.claims', true), '') as claims`;
-    expect(rows[0]).toEqual({ role: "toki_app", claims: null });
+    expect(rows[0]).toEqual({ role: "toki_test_app", claims: null });
   });
 
   it("create_business_with_owner creó negocio, owner, bot y horarios", async () => {

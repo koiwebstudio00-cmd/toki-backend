@@ -1,7 +1,7 @@
 # Toki — Plan de lanzamiento v1
 
 **Fecha:** 2026-10-05 · **Versión:** 2 — incorpora las decisiones de Cacho del 2026-10-05 (§0) y pasa a un plan por fases (§6)
-**Repos:** `toki-api`, `toki` (front), `toki-agents` · **Rama de trabajo:** `agente-v3` en los tres
+**Repos:** `toki-api`, `toki` (front), `toki-agents` · **Rama de trabajo actual:** `dev` (las referencias a `agente-v3` más abajo describen el plan histórico)
 **Objetivo:** salir esta semana con un flujo simple: el pedido se arma en la web, WhatsApp lo recibe e informa.
 **Estado:** plan aprobado en sus decisiones; ninguna fase empezó.
 
@@ -158,7 +158,7 @@ Cada fase se puede desplegar sola y tiene vuelta atrás. Hasta la fase 6 los cli
 
 | # | Tarea | Quién |
 | --- | --- | --- |
-| 0.1 | `npm run test:prepare && npm test` sobre `agente-v3`, con `DATABASE_URL_TEST` | Cacho |
+| 0.1 | `npm run test:prepare && npm test` sobre `dev`, con `DATABASE_URL_TEST` | Cacho |
 | 0.2 | Backup de la base de producción (`scripts/backup-to-r2.sh`) | Cacho |
 | 0.3 | Merge de `agente-v3` a `main` en `toki-api` y push. El entrypoint aplica `0008`–`0012` | Cacho |
 | 0.4 | `scripts/smoke.sh`, `GET /v1/health` y revisar que el panel cargue pedidos | Cacho |

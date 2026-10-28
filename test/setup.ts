@@ -1,7 +1,10 @@
 // Corre antes de cada archivo de test (vitest setupFiles), ANTES de importar config.
-// La app bajo test se conecta como toki_app, igual que en producción, para que
+// La app bajo test se conecta como toki_test_app, con los mismos contextos que producción, para que
 // RLS aplique de verdad. Los datos de prueba se preparan con el rol dueño.
 import "dotenv/config";
+import { testDatabaseConfig } from "../scripts/lib/test-database.js";
+
+const testDatabase = process.env.DATABASE_URL_TEST ? testDatabaseConfig(process.env) : null;
 
 process.env.NODE_ENV = "test";
 // Nunca heredar las credenciales reales ni activar el worker en una prueba automática.
@@ -19,14 +22,13 @@ process.env.MP_TOKEN_ENCRYPTION_KEY = "";
 process.env.MP_REDIRECT_URI = "";
 process.env.MP_ENVIRONMENT = "test";
 
-if (process.env.DATABASE_URL_TEST) {
-  const url = new URL(process.env.DATABASE_URL_TEST);
-  url.username = "toki_app";
-  url.password = process.env.DATABASE_TEST_APP_PASSWORD ?? "toki_app_test"; // la fija scripts/migrate-test.ts
-  process.env.DATABASE_URL = url.toString();
+if (testDatabase) {
+  process.env.DATABASE_URL = testDatabase.runtimeUrl;
+  process.env.DATABASE_URL_LISTEN = testDatabase.runtimeUrl;
 } else {
   // Sin BD de test: los tests de integración se saltean (describe.runIf).
-  process.env.DATABASE_URL ??= "postgresql://toki_app:x@127.0.0.1:1/none";
+  process.env.DATABASE_URL = "postgresql://toki_test_app:x@127.0.0.1:1/none";
+  process.env.DATABASE_URL_LISTEN = process.env.DATABASE_URL;
 }
 
 // Key del agente conocida para los tests: sha256("test-agent-key").

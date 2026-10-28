@@ -27,21 +27,28 @@ export async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T
 }
 
 /** Crea (o actualiza la password de) toki_app. Los roles son de todo el cluster. */
-export async function ensureAppRole(ownerUrl: string, password: string): Promise<void> {
+export async function ensureAppRole(ownerUrl: string, password: string, role = APP_ROLE, preserveExisting = false): Promise<void> {
   await withClient(ownerUrl, async (c) => {
-    const { rowCount } = await c.query("select 1 from pg_roles where rolname = $1", [APP_ROLE]);
+    const { rowCount, rows } = await c.query("select rolcanlogin, rolsuper, rolbypassrls, rolinherit, rolcreatedb, rolcreaterole from pg_roles where rolname = $1", [role]);
+    if (rowCount && preserveExisting) {
+      const r = rows[0];
+      if (!r.rolcanlogin || r.rolsuper || r.rolbypassrls || r.rolinherit || r.rolcreatedb || r.rolcreaterole) {
+        throw new Error(`El rol ${role} debe ser LOGIN NOINHERIT y no tener privilegios administrativos.`);
+      }
+      return; // Never rotate an existing test role's password.
+    }
     const verb = rowCount ? "alter" : "create";
-    await c.query(`${verb} role ${ident(APP_ROLE)} login noinherit password ${literal(password)}`);
+    await c.query(`${verb} role ${ident(role)} login noinherit password ${literal(password)}`);
   });
 }
 
 /** Otorga CONNECT y los roles de contexto (si ya existen: los crea la migración 0001). */
-export async function grantAppRole(ownerUrl: string): Promise<void> {
+export async function grantAppRole(ownerUrl: string, role = APP_ROLE): Promise<void> {
   await withClient(ownerUrl, async (c) => {
     const db = (await c.query<{ db: string }>("select current_database() as db")).rows[0]!.db;
-    await c.query(`grant connect on database ${ident(db)} to ${ident(APP_ROLE)}`);
+    await c.query(`grant connect on database ${ident(db)} to ${ident(role)}`);
     const { rowCount } = await c.query("select 1 from pg_roles where rolname = 'service_role'");
-    if (rowCount) await c.query(`grant anon, authenticated, service_role to ${ident(APP_ROLE)}`);
+    if (rowCount) await c.query(`grant anon, authenticated, service_role to ${ident(role)}`);
   });
 }
 

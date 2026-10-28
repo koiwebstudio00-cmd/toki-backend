@@ -144,7 +144,7 @@ export async function withDb<T>(ctx: DbCtx, fn: (tx: Tx) => Promise<T>): Promise
 ## 6. Estructura del repo
 
 ```text
-toki-api/
+toki-backend/
 ├── src/
 │   ├── app.ts                  # Express: middlewares globales + montaje de routers
 │   ├── server.ts               # listen + arranque del hub de realtime
@@ -322,7 +322,7 @@ ZERNIO_BASE_URL=https://zernio.com/api/v1
 | Agente | API key, dedup de mensajes, tools principales | `test/agent.test.ts` |
 | Contrato | Endpoints públicos no exponen datos privados (tests anti-fuga) | `test/public.test.ts` |
 
-Postgres local de Homebrew, base `toki_test`. `npm run test:prepare` la recrea y aplica las migraciones; cada archivo de test siembra sus datos (`test/helpers.ts`: 2 negocios, owner y staff). La app bajo test se conecta como `toki_app`, igual que en producción.
+Postgres local de Homebrew, base `toki_test`. `npm run test:prepare` la recrea y aplica las migraciones; cada archivo de test siembra sus datos (`test/helpers.ts`: 2 negocios, owner y staff). La app bajo test se conecta como `toki_test_app`, un rol LOGIN NOINHERIT exclusivo con los mismos roles de contexto de producción. La preparación no altera contraseñas existentes ni la base de desarrollo; ver [setup local](setup-local.md).
 
 Al terminar una tarea: `npm run lint && npx tsc --noEmit && npm run build && npm test`.
 
