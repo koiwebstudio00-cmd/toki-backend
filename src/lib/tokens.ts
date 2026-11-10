@@ -36,21 +36,21 @@ export function verifyAccessToken(token: string): AccessClaims {
   return { userId: payload.sub, email: String(payload.email ?? "") };
 }
 
-export function signAdminToken(claims: AccessClaims): string {
-  return jwt.sign({ email: claims.email, typ: "admin-access" }, jwtSecret, {
+export function signAdminToken(claims: AccessClaims & { version: number }): string {
+  return jwt.sign({ email: claims.email, typ: "admin-access", ver: claims.version }, jwtSecret, {
     subject: claims.userId, issuer: ISSUER, audience: "toki-admin",
     expiresIn: ADMIN_ACCESS_TTL_SECONDS, algorithm: "HS256"
   });
 }
 
-export function verifyAdminToken(token: string): AccessClaims {
+export function verifyAdminToken(token: string): AccessClaims & { version: number } {
   const payload = jwt.verify(token, jwtSecret, {
     algorithms: ["HS256"], issuer: ISSUER, audience: "toki-admin"
   }) as jwt.JwtPayload;
-  if (payload.typ !== "admin-access" || typeof payload.sub !== "string" || typeof payload.email !== "string") {
+  if (payload.typ !== "admin-access" || typeof payload.sub !== "string" || typeof payload.email !== "string" || !Number.isInteger(payload.ver)) {
     throw new Error("Token no es de superadmin");
   }
-  return { userId: payload.sub, email: payload.email };
+  return { userId: payload.sub, email: payload.email, version: Number(payload.ver) };
 }
 
 /** Token opaco (refresh, verificación, reset). En la BD solo va su hash. */

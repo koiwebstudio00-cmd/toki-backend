@@ -7,6 +7,9 @@ import * as invitations from "../auth/invitations.js";
 import { loginAdmin, requireAdminSession } from "./session.js";
 import * as admin from "./service.js";
 
+import { activationCheckInput, activationStartInput, activationConfirmInput } from "./activation.schemas.js";
+import { checkAdminActivation, startAdminActivation, confirmAdminActivation } from "./activation.js";
+
 export const adminRoutes = Router();
 const sessionInput = loginSchema.extend({ code: z.string().trim().regex(/^\d{6}$/, "Ingresá el código de seis dígitos.") });
 const pageInput = z.object({ cursor: uuid("Página inválida.").optional(), q: z.string().trim().max(120).optional() });
@@ -14,6 +17,17 @@ const pageInput = z.object({ cursor: uuid("Página inválida.").optional(), q: z
 adminRoutes.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 adminRoutes.post("/session", authLimiter(), async (req, res) => {
   res.json(await loginAdmin(sessionInput.parse(req.body)));
+});
+
+adminRoutes.post("/activation/check", authLimiter(), async (req, res) => {
+  res.json(await checkAdminActivation(activationCheckInput.parse(req.body).token));
+});
+adminRoutes.post("/activation/start", authLimiter(), async (req, res) => {
+  res.json(await startAdminActivation(activationStartInput.parse(req.body)));
+});
+adminRoutes.post("/activation/confirm", authLimiter(), async (req, res) => {
+  const input = activationConfirmInput.parse(req.body);
+  res.json(await confirmAdminActivation(input.setupToken, input.code));
 });
 
 adminRoutes.use(requireAdminSession);

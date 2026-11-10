@@ -1,10 +1,12 @@
-import { config } from "../../config.js";
+
 import { systemCtx, type Tx, withDb } from "../../lib/db.js";
 import { ApiError } from "../../lib/errors.js";
 import { addDays, randomToken, sha256 } from "../../lib/tokens.js";
 
 export function isSuperadmin(userId: string) {
-  return config.SUPERADMIN_USER_IDS.includes(userId.toLowerCase());
+  return withDb(systemCtx, async tx => Boolean(await tx.user.count({
+    where: { id: userId, adminAccessEnabled: true, adminTotpSecretEncrypted: { not: null } }
+  })));
 }
 
 const summary = { id: true, email: true, createdAt: true, expiresAt: true, usedAt: true, revokedAt: true } as const;

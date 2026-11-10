@@ -60,7 +60,12 @@
 | POST | `/auth/reset-password` | — | `{ token, password }` | `{ ok: true }` | `updateUser({ password })` |
 | GET | `/auth/me` | U | Header opcional `X-Business-Id` | `{ user: { id, email, emailVerified }, profile: { fullName, phone, avatarUrl }, businesses: SessionBusiness[], currentBusiness: SessionBusiness \| null, isSuperadmin }` | `lib/auth.tsx` |
 
-Toki Admin usa `POST /v1/admin/session` con `{ email, password, code }`. La API emite un token administrativo de 15 minutos después de validar la cuenta verificada y el código del autenticador. Cada código válido se consume una sola vez. Las demás rutas bajo `/v1/admin` requieren este token.
+Toki Admin usa `POST /v1/admin/session` con `{ email, password, code }`. La API emite un token administrativo de 15 minutos después de validar la cuenta verificada, su permiso en la base y el autenticador. El token incluye una versión verificada en cada solicitud. Cada código válido se consume una sola vez. Las demás rutas bajo `/v1/admin` requieren este token.
+
+- `POST /v1/admin/activation/check` con `{ token }` devuelve `{ email }` para un enlace administrativo válido.
+- `POST /v1/admin/activation/start` con `{ token, fullName, password }` intercambia el enlace por `{ setupToken, secret, provisioningUri, email, expiresAt }`. Configura el autenticador, sin habilitar aún el acceso.
+- `POST /v1/admin/activation/confirm` con `{ setupToken, code }` completa el alta y devuelve la sesión administrativa. El enlace vence en 30 minutos y se bloquea tras cinco códigos incorrectos. Contraseña y secreto temporales se eliminan al finalizar.
+- El alta y la recuperación solo se emiten mediante `dist/ops/bootstrap-admin.js`, nunca desde un endpoint público. No crean invitaciones de clientes ni negocios.
 
 - `GET /v1/admin/overview?days=30` devuelve totales globales y la distribución de pedidos por estado actual y canal. Acepta 7, 30 o 90 días.
 - `GET /v1/admin/users`, `GET /v1/admin/businesses` y `GET /v1/admin/orders` devuelven `{ data, nextCursor }`. Aceptan búsqueda `q` y paginación por `cursor`. Los pedidos exponen información operativa sin teléfono, domicilio ni notas del cliente.

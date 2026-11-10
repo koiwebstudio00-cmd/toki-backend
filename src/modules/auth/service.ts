@@ -263,7 +263,7 @@ export async function me(userId: string, email: string, requestedBusinessId?: st
 
   return {
     user: { id: user.id, email: user.email, emailVerified: Boolean(user.emailVerifiedAt) },
-    isSuperadmin: Boolean(user.emailVerifiedAt) && isSuperadmin(user.id),
+    isSuperadmin: Boolean(user.emailVerifiedAt) && await isSuperadmin(user.id),
     profile: {
       fullName: profile?.fullName ?? fullNameOf(user),
       phone: profile?.phone ?? null,

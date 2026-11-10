@@ -14,7 +14,7 @@ Resumen para quien ya tiene Postgres 17 andando:
 npm install                     # corre prisma generate
 cp .env.example .env            # poner tu usuario de Postgres en las URLs de migrate y test
 createdb toki && createdb toki_test
-npm run db:migrate:deploy       # crea toki_app y aplica las migraciones pendientes (actualmente 0001–0025)
+npm run db:migrate:deploy       # crea toki_app y aplica las migraciones pendientes (actualmente 0001–0026)
 npm run seed                    # 2 negocios demo (owner@burger.test / toki12345)
 npm run dev                     # http://localhost:3000/v1/health
 npm run test:prepare && npm test
@@ -52,4 +52,4 @@ La migración `0023_menu_appearance` y el módulo `src/modules/menu-appearance` 
 
 ## Acceso por invitación y Toki Admin
 
-El registro requiere invitación. La API administra el panel interno publicado desde el repo privado `toki-admin` en Vercel; permite consultar estadísticas globales, usuarios, negocios y pedidos, y gestionar invitaciones. El acceso exige una cuenta verificada y autorizada, contraseña y autenticador. Ver [despliegue y alta del primer superadmin](docs/deploy.md#18-toki-admin-en-vercel-y-alta-del-primer-superadmin) y [contrato de autenticación](docs/api.md).
+El registro requiere invitación. La API administra el panel interno publicado desde el repo privado `toki-admin` en Vercel; permite consultar estadísticas globales, usuarios, negocios y pedidos, y gestionar invitaciones. El acceso exige una cuenta verificada y autorizada, contraseña y autenticador. Ver [despliegue y alta del primer superadmin](docs/deploy.md#18-toki-admin-en-vercel-y-activación-administrativa) y [contrato de autenticación](docs/api.md).

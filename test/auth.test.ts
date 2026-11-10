@@ -8,6 +8,7 @@ import { bearer, createBusiness, createUser, DB_AVAILABLE, ownerDb, truncateAll 
 
 import { config } from "../src/config.js";
 import { Secret, TOTP } from "otpauth";
+import { sealAdminSecret } from "../src/modules/admin/crypto.js";
 
 const app = buildApp();
 const PASSWORD = "clave-segura-1";
@@ -63,11 +64,13 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
       const admin = await createUser("superadmin@toki.test");
       const owner = await createUser("ordinary-owner@toki.test");
       await createBusiness(owner, "ordinary-owner");
-      const previous = { ids: config.SUPERADMIN_USER_IDS, email: config.SUPERADMIN_EMAIL, secret: config.SUPERADMIN_TOTP_SECRET };
+      const previousKey = config.ADMIN_AUTH_ENCRYPTION_KEY;
       const secret = new Secret({ size: 20 });
-      config.SUPERADMIN_USER_IDS = [admin.id];
-      config.SUPERADMIN_EMAIL = admin.email;
-      config.SUPERADMIN_TOTP_SECRET = secret.base32;
+      config.ADMIN_AUTH_ENCRYPTION_KEY = "5".repeat(64);
+
+      await ownerDb().user.update({ where: { id: admin.id }, data: {
+        adminAccessEnabled: true, adminSessionVersion: 1, adminTotpSecretEncrypted: sealAdminSecret(secret.base32, admin.id)
+      } });
       try {
         await request(app).get("/v1/admin/invitations").expect(401);
         await request(app).post("/v1/admin/invitations").set(bearer(owner)).send({ email: "invitee@toki.test" }).expect(401);
@@ -100,9 +103,9 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
         await request(app).post(`/v1/admin/invitations/${id}/revoke`).set(headers).expect(200);
         await request(app).post("/v1/auth/invitations/check").send({ invitationCode: inviteCode }).expect(400);
       } finally {
-        config.SUPERADMIN_USER_IDS = previous.ids;
-        config.SUPERADMIN_EMAIL = previous.email;
-        config.SUPERADMIN_TOTP_SECRET = previous.secret;
+        config.ADMIN_AUTH_ENCRYPTION_KEY = previousKey;
+
+
       }
     });
 

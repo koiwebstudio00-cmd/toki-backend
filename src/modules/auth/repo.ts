@@ -37,7 +37,7 @@ export function markEmailVerified(tx: Tx, userId: string) {
 }
 
 export function setPassword(tx: Tx, userId: string, passwordHash: string) {
-  return tx.user.update({ where: { id: userId }, data: { passwordHash }, select: { id: true } });
+  return tx.user.update({ where: { id: userId }, data: { passwordHash, adminSessionVersion: { increment: 1 } }, select: { id: true } });
 }
 
 // ── Tokens de email ─────────────────────────────────────────────────────────

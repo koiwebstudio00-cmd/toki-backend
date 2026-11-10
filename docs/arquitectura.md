@@ -86,13 +86,15 @@ Sin sesión. Contexto de BD `anon` (las policies públicas solo muestran negocio
 
 ### 4.5 Invitaciones y Toki Admin
 
-El registro requiere una invitación activa para el mismo email. El código aleatorio se guarda como hash SHA-256 en `auth.signup_invitations`, vence a los siete días y se consume dentro de la transacción que crea el usuario. La verificación del correo y las sesiones del panel de negocios mantienen su flujo habitual.
+Las identidades comparten `auth.users`. Los clientes se registran por invitación; su código SHA-256 vence a los siete días y se consume en la transacción del alta.
 
-La aplicación interna `toki-admin` se publica por separado en Vercel. Usa `POST /v1/admin/session` con email, contraseña y TOTP. La cuenta debe tener el correo verificado, su UUID en `SUPERADMIN_USER_IDS` y su email en `SUPERADMIN_EMAIL`; el código se valida con `SUPERADMIN_TOTP_SECRET`. El último paso temporal consumido se guarda en `auth.users.last_admin_totp_step` para impedir reutilizaciones, incluso entre procesos.
+El superadmin se provisiona desde una operación interna y activa contraseña y autenticador en `/activar` de `toki-admin`, publicado en Vercel. No usa el alta de clientes ni necesita un negocio. El permiso queda en `auth.users.admin_access_enabled` y el TOTP se cifra con AES-256-GCM usando una clave exclusiva del servidor y el usuario como contexto.
 
-La API emite un JWT de 15 minutos con audiencia `toki-admin` y tipo `admin-access`. Los endpoints administrativos validan ese token y vuelven a comprobar la cuenta permitida. Las sesiones normales del negocio no autorizan estas rutas. El frontend conserva el token administrativo en memoria y lo descarta al recargar.
+La tabla `auth.admin_activations` tiene RLS y solo permite acceso a `service_role`. El enlace dura 30 minutos y se intercambia por una credencial de setup de un solo uso. Se permiten cinco códigos TOTP incorrectos; el permiso solo se habilita al finalizar. Contraseña y secreto temporales se limpian después de usarse.
 
-Las consultas globales pasan por `withDb(systemCtx, ...)` después de la autorización administrativa. Las invitaciones se crean y revocan desde esas mismas rutas protegidas. La puesta en marcha, las variables exclusivas de la API y el comando compilado del primer alta están en [la guía de Toki Admin](deploy.md#18-toki-admin-en-vercel-y-alta-del-primer-superadmin).
+La sesión administrativa usa JWT de 15 minutos, audiencia `toki-admin`, tipo `admin-access` y una versión comprobada contra la identidad. Un reset administrativo o cambio de contraseña invalida sesiones anteriores. `last_admin_totp_step` evita reutilizar códigos entre procesos. El frontend conserva el token en memoria. Las consultas globales usan `withDb(systemCtx, ...)` después de autorizar la sesión; los tokens normales no dan acceso.
+
+Ver [activación y despliegue](deploy.md#18-toki-admin-en-vercel-y-activación-administrativa).
 
 ## 5. Acceso a datos y RLS
 

@@ -546,70 +546,80 @@ Con **Auto Deploy** activado, cada push a `main` construye y reemplaza el conten
 | La subida falla con un host raro y repetido | `R2_ACCOUNT_ID` mal cargado | Poné el id de 32 hex; la app lo normaliza y valida al arrancar |
 | El tiempo real no manda eventos | `DATABASE_URL_LISTEN` mal, o el pool sin conexiones libres | Dejar una connection string aparte para LISTEN |
 
-## 18. Toki Admin en Vercel y alta del primer superadmin
+## 18. Toki Admin en Vercel y activación administrativa
 
-El frontend interno vive en el repo privado `toki-admin` y se despliega en Vercel. La API sigue en este stack de Dokploy. No hace falta otro contenedor para el frontend administrativo. Sus consultas pasan por el proxy de Vercel `/api/v1/admin/*` hacia `https://toki-api.koistudio.com.ar/v1/admin/*`. La configuración del proyecto y del dominio está en el README de `toki-admin`.
+Toki Admin se publica desde su repo privado en Vercel. La API sigue en Dokploy. Las cuentas comparten `auth.users`, pero la activación administrativa ocurre en `/activar` del panel interno y no crea negocios ni usa invitaciones de clientes.
 
-### Publicar la API compatible
+### Configuración y despliegue
 
-Este release incorpora las migraciones `0024_signup_invitations` y `0025_superadmin_totp`. El entrypoint aplica las migraciones al desplegar. No ejecutar `prisma migrate dev` en producción.
-
-El registro pasa a exigir una invitación para el mismo email. El frontend público de Toki debe tener el registro en `/acceso/invitacion` antes de completar el alta del primer superadmin o invitar clientes. Publicar solamente el frontend administrativo no incorpora ese registro a la app pública.
-
-Para el primer alta, configurá en **Environment del stack de la API en Dokploy**:
+Aplicar las migraciones hasta `0026_admin_activation` mediante el entrypoint habitual. Configurar en Environment de la API:
 
 ```dotenv
-SUPERADMIN_EMAIL=koiwebstudio.00@gmail.com
-SUPERADMIN_USER_IDS=
-SUPERADMIN_TOTP_SECRET=
+ADMIN_FRONT_URL=https://toki-admin.koistudio.com.ar
+ADMIN_AUTH_ENCRYPTION_KEY=<32 bytes aleatorios, en 64 caracteres hexadecimales>
 ```
 
-El Compose reenvía estas tres variables al contenedor de la API. Con la lista de UUID o el secreto vacíos, el ingreso administrativo permanece deshabilitado. No poner estas variables en Vercel ni en nombres `VITE_*`. Conservá las demás variables del stack y la configuración de SMTP y `FRONT_URL=https://toki.koistudio.com.ar`.
-
-Después del push a `main`, verificá el despliegue de Dokploy, las dos migraciones y estas respuestas:
+Generar la clave una sola vez desde una terminal privada:
 
 ```bash
-curl https://toki-api.koistudio.com.ar/v1/health
-curl -i https://toki-api.koistudio.com.ar/v1/admin/overview
-curl -i https://toki-admin.koistudio.com.ar/api/v1/admin/overview
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Health debe responder correctamente. Las dos consultas administrativas sin token deben devolver `401` en JSON. Un `404` indica que la API publicada o el proxy todavía no tiene las rutas; una respuesta HTML del panel indica un problema de enrutamiento en Vercel.
+Es una clave exclusiva del servidor, separada de `JWT_SECRET`. No ponerla en Vercel ni en variables `VITE_*`. Mantenerla estable: cambiarla sin volver a activar las cuentas impide abrir sus autenticadores. Los secretos TOTP individuales se generan en el alta y se guardan cifrados con AES-256-GCM, vinculados a su usuario.
 
-### Crear o identificar la cuenta
+`SUPERADMIN_USER_IDS` y `SUPERADMIN_TOTP_SECRET` dejan de usarse. Las cuentas administrativas anteriores deben activarse una vez con el nuevo flujo. Publicar la API antes que la nueva pantalla de `toki-admin`.
 
-En una terminal privada del **contenedor toki-api** en Dokploy, ejecutá:
+### Alta y primer acceso
+
+Desde la terminal del contenedor de la API:
 
 ```bash
-cd /app && node dist/ops/bootstrap-admin.js
+cd /app
+SUPERADMIN_EMAIL=koiwebstudio.00@gmail.com node dist/ops/bootstrap-admin.js
 ```
 
-El comando compilado está incluido en la imagen. Para desarrollo, el equivalente es `npm exec tsx -- scripts/bootstrap-admin.ts`.
+El comando entrega un enlace privado de `https://toki-admin.koistudio.com.ar/activar#token=…`. Si no existe la identidad, la crea; si ya tiene un negocio, exige un email dedicado para administración. No requiere configurar UUID ni TOTP individuales en el servidor.
 
-- Si la cuenta no existe, imprime un enlace de invitación para `SUPERADMIN_EMAIL`. Abrilo, completá nombre, teléfono y una contraseña propia, y verificá el correo. El enlace es sensible, vence a los siete días y se consume al registrar la cuenta; no pegarlo en logs compartidos ni en el repo.
-- Si existe pero no verificó el correo, completá esa verificación o solicitá el reenvío desde Toki.
-- Si ya está verificada, imprime `SUPERADMIN_USER_IDS=<UUID>`. Volvé a ejecutar el comando después de completar el alta para obtener ese valor.
+1. Abrir el enlace y elegir nombre y contraseña.
+2. Escanear el QR del autenticador o ingresar la clave manual que muestra la pantalla.
+3. Guardar una copia de recuperación y confirmar el código de seis dígitos.
+4. Entrar al panel administrativo, sin registrar un negocio.
 
-El acceso administrativo no requiere crear un negocio. La autorización exige que coincidan el UUID permitido y el email configurado, además de verificar el correo, la contraseña y el código del autenticador.
+El enlace vence en 30 minutos y se intercambia una sola vez por una credencial limitada al setup, mantenida en memoria. Recargar durante ese paso requiere un enlace nuevo. Cinco códigos incorrectos bloquean la activación. Solo al terminar se habilitan el permiso administrativo y la contraseña elegida, se verifica el email y se revocan las sesiones normales y enlaces de verificación o recuperación previos de esa identidad.
 
-### Configurar el autenticador
+### Recuperación
 
-Desde la misma terminal privada del contenedor, generá un secreto nuevo:
+Una cuenta ya activa no admite otro alta accidental. Para recuperar el acceso, un operador autorizado puede emitir una activación nueva explícitamente:
 
 ```bash
-cd /app && node --input-type=module -e 'import {Secret} from "otpauth"; console.log(new Secret({size:20}).base32)'
+cd /app
+SUPERADMIN_EMAIL=koiwebstudio.00@gmail.com node dist/ops/bootstrap-admin.js --reset
 ```
 
-El titular debe agregarlo en su aplicación autenticadora como clave manual con estos parámetros: cuenta `koiwebstudio.00@gmail.com`, emisor Toki Admin, basada en tiempo, SHA-1, seis dígitos y período de 30 segundos. Guardá una copia de recuperación del secreto en el gestor de contraseñas. Esta versión usa alta manual del autenticador; no ofrece un asistente QR ni códigos de recuperación propios.
+El reset deshabilita el acceso administrativo e invalida de inmediato las sesiones y activaciones anteriores. La cuenta debe completar contraseña y autenticador otra vez. No borrar la identidad para recuperar acceso.
 
-En **Environment del stack de la API**, completá `SUPERADMIN_USER_IDS` con el UUID obtenido y `SUPERADMIN_TOTP_SECRET` con ese secreto Base32 de 32 caracteres. Conservá `SUPERADMIN_EMAIL` y desplegá nuevamente la API para que tome las variables. No cambiar `JWT_SECRET` para este alta. La contraseña se carga en Toki; el secreto y los códigos del autenticador no se comparten por chat ni se commitean.
+Las sesiones administrativas duran 15 minutos, tienen versión verificada en cada solicitud y viven en memoria en el frontend. Cambiar la contraseña también invalida sesiones administrativas anteriores. Cada código TOTP válido se consume una sola vez.
 
-### Verificar el acceso y las invitaciones
+### Verificación
 
-1. Entrá a `https://toki-admin.koistudio.com.ar` con email, contraseña y un código vigente del autenticador.
-2. Revisá Resumen, Usuarios, Negocios y Pedidos. Comprobá la búsqueda y la paginación de los listados.
-3. Creá una invitación para un email de prueba controlado, abrí el enlace en una ventana privada y completá el registro y la verificación. Comprobá que el enlace usado o revocado no pueda registrar otra cuenta.
-4. Probá con una cuenta de negocio común: no debe acceder a la consola administrativa. El token normal del panel de negocios tampoco habilita `/v1/admin/*`.
-5. Cerrá sesión o recargá la página: el token administrativo se guarda solo en memoria y el panel vuelve a pedir acceso. La sesión vence a los 15 minutos.
+- Health: HTTP 200 y base conectada.
+- `/v1/admin/overview` y `/api/v1/admin/overview` desde Vercel, sin sesión: HTTP 401 en JSON.
+- Enlace ausente, incompleto, vencido o usado: error explícito, sin redirección silenciosa al login.
+- Completar contraseña y QR: acceso al panel y a sus listados sin crear un negocio.
+- Cuenta o token normal de Toki: sin acceso administrativo.
+- Una invitación de cliente creada en Admin sigue abriendo el registro de la app pública y su verificación de email habitual.
 
-Un código TOTP válido se acepta una sola vez; si se intenta reutilizar, esperá al siguiente. Si se pierde el autenticador, un operador autorizado debe generar un secreto nuevo, configurarlo en el teléfono del titular y en la API, y volver a desplegar. Vaciar `SUPERADMIN_USER_IDS` o `SUPERADMIN_TOTP_SECRET` y desplegar deshabilita el acceso administrativo.
+### Primera invitación de cliente
+
+Una vez activo el superadmin, entrar a **Invitaciones** en Toki Admin, completar **Email del cliente**, pulsar **Generar invitación** y luego **Copiar enlace**. El enlace apunta al frontend público de Toki y es para ese email, de un solo uso y válido por siete días. Se muestra al generarlo y puede revocarse desde la lista.
+
+El cliente completa sus datos y contraseña, verifica el email y crea su negocio en la app pública. El superadmin no necesita crear un negocio para invitar clientes.
+
+### Publicación de esta entrega
+
+1. Generar y guardar la clave de cifrado y configurar `ADMIN_FRONT_URL` en Environment de la API, sin modificar las demás variables.
+2. Publicar `toki-backend` y esperar el despliegue y la migración `0026`.
+3. Publicar `toki-admin` y comprobar que `/activar` abre la pantalla administrativa.
+4. Ejecutar el comando de alta y completar contraseña y QR. No reutilizar la invitación de cliente del flujo anterior.
+
+Validación local: build, tipos y lint de la API aprobados; suite completa de 508 pruebas aprobada y un caso adicional de revocación por cambio de contraseña aprobado (509 casos distintos). Toki Admin pasó build y lint. Se revisaron el formulario de activación en escritorio, ancho móvil de 390 px sin desbordamiento y el error explícito de enlace incompleto. El escaneo con el teléfono real y la cuenta de producción se comprueban después de publicar.
