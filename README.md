@@ -44,8 +44,10 @@ Cada fase tiene su documento en [`docs/fases/`](docs/fases/) con los resultados 
 
 ---
 
-Koi Studio
+Koi AI Studio
 
 ## Apariencia del menú
 
 La migración `0023_menu_appearance` y el módulo `src/modules/menu-appearance` permiten guardar un borrador privado y publicar la apariencia por negocio. El endpoint público entrega únicamente lo publicado; menú, producto, carrito, checkout y seguimiento usan esa misma configuración en el frontend. Ver [contrato de apariencia](docs/api.md#apariencia-del-menú-2026-10-28).
+
+
