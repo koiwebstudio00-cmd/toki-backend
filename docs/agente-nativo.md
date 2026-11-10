@@ -88,7 +88,11 @@ Fuentes del contrato: [webhooks y firmas](https://docs.zernio.com/webhooks), [ev
 
 ### Solicitudes del catálogo web
 
-El agente reconoce el mensaje completo generado por el checkout (referencia `WEB-…`) y ofrece `recibir_pedido_catalogo`, sin permitir reconstruir ese carrito con herramientas de borrador. Recupera productos, opciones, cupón y datos desde la solicitud almacenada; verifica hash del mensaje, negocio, conversación, vencimiento y precios. También funciona cuando llega una frase adicional en la misma ráfaga. Prepara un resumen y botones; al aceptar, reutiliza `receiveCatalog` y crea un único pedido de origen web, asociado a la conversación. Un mensaje editado o una cotización desactualizada exige volver al carrito. No se pierde el descuento ni se crea un pedido alternativo a partir de texto interpretado por el modelo.
+El checkout usa el teléfono de la integración activa de Zernio cuando el asistente está habilitado para tomar pedidos y el canal tiene un número válido. En los demás casos usa el WhatsApp de contacto del negocio. Abrir WhatsApp deja la solicitud pendiente. Con el asistente deshabilitado, el equipo atiende el mensaje y carga el pedido desde el panel.
+
+El agente reconoce el mensaje completo generado por el checkout (referencia `WEB-…`) y ofrece `recibir_pedido_catalogo`. Valida el contenido contra la solicitud guardada, tolerando espacios no separables y finales de línea del transporte. Recalcula precios y comprueba negocio, conversación y vencimiento. El comprador revisa el resumen y acepta con el botón. En ese momento `receiveCatalog` crea un único pedido web asociado al chat y devuelve el código y el enlace de seguimiento. Un cambio de contenido o de cotización exige volver al carrito.
+
+La bandeja reúne los chats que comparten un teléfono dentro del mismo negocio. Consulta el historial de todos los registros del grupo, conserva los casos y prioriza el chat con una derivación o un caso activo. Muestra el nombre de Clientes cuando se puede identificar al contacto, luego el nombre de perfil recibido en los mensajes y finalmente el teléfono.
 
 ### Resultado de la verificación local
 
