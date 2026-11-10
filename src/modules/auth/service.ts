@@ -17,6 +17,7 @@ import {
 } from "../../lib/tokens.js";
 import * as repo from "./repo.js";
 import type { LoginInput, RegisterInput } from "./schemas.js";
+import { consumeInvitation, isSuperadmin } from "./invitations.js";
 
 /**
  * Ventana en la que reusar un refresh recién rotado NO se trata como robo:
@@ -85,18 +86,17 @@ const getDummyHash = () => (dummyHash ??= hashPassword(randomToken()));
 // ── Registro y verificación ─────────────────────────────────────────────────
 
 export async function register(input: RegisterInput): Promise<void> {
+  const { invitationCode, email, phone } = input;
   const passwordHash = await hashPassword(input.password);
 
   const result = await withDb(systemCtx, async (tx) => {
-    const existing = await repo.findUserByEmail(tx, input.email);
-    if (existing?.emailVerifiedAt) {
+    await consumeInvitation(tx, invitationCode, email);
+    if (await repo.findUserByEmail(tx, email)) {
       throw new ApiError("CONFLICT", "Ya existe una cuenta con ese email. Iniciá sesión o recuperá tu contraseña.");
     }
-    // Cuenta sin verificar: no se pisa la contraseña (podría no ser el dueño del
-    // email); solo se reenvía el link al email real.
-    const user = existing ?? (await repo.createUser(tx, { email: input.email, passwordHash, fullName: input.fullName }));
+    const user = await repo.createUser(tx, { email, passwordHash, fullName: input.fullName });
+    await tx.profile.update({ where: { id: user.id }, data: { phone } });
     const token = randomToken();
-    await repo.invalidateEmailTokens(tx, user.id, "verify_email");
     await repo.createEmailToken(tx, {
       userId: user.id,
       purpose: "verify_email",
@@ -137,7 +137,7 @@ export async function resendVerification(email: string): Promise<void> {
 
 // ── Sesiones ────────────────────────────────────────────────────────────────
 
-export async function login(input: LoginInput, userAgent?: string): Promise<Session> {
+export async function authenticatePassword(input: LoginInput) {
   const user = await withDb(systemCtx, (tx) => repo.findUserByEmail(tx, input.email));
   const ok = await verifyPassword(user?.passwordHash ?? (await getDummyHash()), input.password);
   if (!user || !ok) throw new ApiError("UNAUTHORIZED", INVALID_CREDENTIALS);
@@ -145,7 +145,11 @@ export async function login(input: LoginInput, userAgent?: string): Promise<Sess
   if (!user.emailVerifiedAt) {
     throw new ApiError("EMAIL_NOT_VERIFIED", "Confirmá tu email para entrar. Te mandamos un link cuando te registraste.");
   }
-  return issueSession(user, userAgent);
+  return user;
+}
+
+export async function login(input: LoginInput, userAgent?: string): Promise<Session> {
+  return issueSession(await authenticatePassword(input), userAgent);
 }
 
 export async function refresh(refreshToken: string, userAgent?: string): Promise<Session> {
@@ -259,6 +263,7 @@ export async function me(userId: string, email: string, requestedBusinessId?: st
 
   return {
     user: { id: user.id, email: user.email, emailVerified: Boolean(user.emailVerifiedAt) },
+    isSuperadmin: Boolean(user.emailVerifiedAt) && isSuperadmin(user.id),
     profile: {
       fullName: profile?.fullName ?? fullNameOf(user),
       phone: profile?.phone ?? null,

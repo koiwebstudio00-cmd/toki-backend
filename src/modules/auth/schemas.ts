@@ -14,11 +14,17 @@ export const passwordSchema = z
   .refine((p) => Buffer.byteLength(p, "utf8") <= 72, "La contraseña es demasiado larga.");
 
 const tokenSchema = z.string({ required_error: "Falta el token." }).trim().min(1, "Falta el token.").max(200);
+export const invitationCodeSchema = z.string({ required_error: "Necesitás una invitación para crear una cuenta." })
+  .trim().toLowerCase().regex(/^[a-f0-9]{64}$/, "El código de invitación no es válido.");
 
 export const registerSchema = z.object({
   fullName: z.string({ required_error: "Ingresá tu nombre." }).trim().min(2, "Ingresá tu nombre.").max(120),
   email: emailSchema,
-  password: passwordSchema
+  password: passwordSchema,
+  invitationCode: invitationCodeSchema,
+  phone: z.string({ required_error: "Ingresá tu teléfono." }).trim().max(40)
+    .regex(/^\+?[\d ().-]+$/, "Ingresá un teléfono válido.")
+    .refine(value => /^\d{7,15}$/.test(value.replace(/\D/g, "")), "Ingresá un teléfono válido.")
 });
 
 export const loginSchema = z.object({

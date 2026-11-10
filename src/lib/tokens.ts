@@ -8,6 +8,7 @@ export const VERIFY_EMAIL_TTL_HOURS = 24;
 export const RESET_PASSWORD_TTL_HOURS = 1;
 
 const ISSUER = "toki-api";
+export const ADMIN_ACCESS_TTL_SECONDS = 15 * 60;
 
 export interface AccessClaims {
   userId: string;
@@ -33,6 +34,23 @@ export function verifyAccessToken(token: string): AccessClaims {
     throw new Error("Token no es de acceso");
   }
   return { userId: payload.sub, email: String(payload.email ?? "") };
+}
+
+export function signAdminToken(claims: AccessClaims): string {
+  return jwt.sign({ email: claims.email, typ: "admin-access" }, jwtSecret, {
+    subject: claims.userId, issuer: ISSUER, audience: "toki-admin",
+    expiresIn: ADMIN_ACCESS_TTL_SECONDS, algorithm: "HS256"
+  });
+}
+
+export function verifyAdminToken(token: string): AccessClaims {
+  const payload = jwt.verify(token, jwtSecret, {
+    algorithms: ["HS256"], issuer: ISSUER, audience: "toki-admin"
+  }) as jwt.JwtPayload;
+  if (payload.typ !== "admin-access" || typeof payload.sub !== "string" || typeof payload.email !== "string") {
+    throw new Error("Token no es de superadmin");
+  }
+  return { userId: payload.sub, email: payload.email };
 }
 
 /** Token opaco (refresh, verificación, reset). En la BD solo va su hash. */

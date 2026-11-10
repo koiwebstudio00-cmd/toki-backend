@@ -30,6 +30,11 @@ const envSchema = z.object({
   FRONT_URL: z.string().default("http://localhost:5173"),
 
   JWT_SECRET: z.string().default(""),
+  SUPERADMIN_USER_IDS: z.string().default("").transform(value =>
+    value.split(",").map(id => id.trim().toLowerCase()).filter(Boolean)
+  ).pipe(z.array(z.string().uuid())),
+  SUPERADMIN_EMAIL: z.string().trim().toLowerCase().email().or(z.literal("")).default(""),
+  SUPERADMIN_TOTP_SECRET: z.string().trim().toUpperCase().regex(/^[A-Z2-7]{32}$/).or(z.literal("")).default(""),
   // Linking and QR collection are enabled separately.
   MP_INTEGRATION_ENABLED: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
   MP_QR_ENABLED: z.enum(["true", "false"]).default("false").transform(v => v === "true"),

@@ -6,6 +6,7 @@ import { config, corsOrigins } from "./config.js";
 import { errorHandler, notFoundHandler } from "./middleware/error.js";
 import { requestLogger } from "./middleware/logging.js";
 import { accountRoutes } from "./modules/account/routes.js";
+import { adminRoutes } from "./modules/admin/routes.js";
 import { agentRoutes } from "./modules/agent/routes.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { businessRoutes, onboardingRoutes } from "./modules/businesses/routes.js";
@@ -47,6 +48,7 @@ export function buildApp() {
   v1.use(mercadopagoWebhookRoutes);
   v1.use(healthRoutes);
   v1.use(authRoutes);
+  v1.use("/admin", adminRoutes);
   v1.use(accountRoutes);
   // Routers de negocio montados con prefijo: sus middlewares (auth + negocio)
   // solo aplican a sus rutas, nunca a /public ni /agent.

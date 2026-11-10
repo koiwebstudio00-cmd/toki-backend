@@ -760,6 +760,7 @@ model User {
   emailVerifiedAt    DateTime?            @map("email_verified_at") @db.Timestamptz(6)
   rawUserMetaData    Json                 @default("{}") @map("raw_user_meta_data")
   lastLoginAt        DateTime?            @map("last_login_at") @db.Timestamptz(6)
+  lastAdminTotpStep  BigInt?              @map("last_admin_totp_step")
   createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
   members            BusinessMember[]
@@ -767,8 +768,24 @@ model User {
   profile            Profile?
   refreshTokens      RefreshToken[]
   emailTokens        EmailToken[]
+  signupInvitations  SignupInvitation[]
 
   @@map("users")
+  @@schema("auth")
+}
+
+model SignupInvitation {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email     String    @db.Citext
+  codeHash  String    @unique @map("code_hash")
+  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  creator   User?     @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@map("signup_invitations")
   @@schema("auth")
 }
 

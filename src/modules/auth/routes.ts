@@ -1,8 +1,10 @@
 import { Router } from "express";
+import { z } from "zod";
 import { requireAuth } from "../../middleware/auth.js";
 import { authLimiter } from "../../middleware/rateLimit.js";
 import {
   emailOnlySchema,
+  invitationCodeSchema,
   loginSchema,
   logoutSchema,
   refreshSchema,
@@ -11,10 +13,16 @@ import {
   tokenOnlySchema
 } from "./schemas.js";
 import * as auth from "./service.js";
+import * as invitations from "./invitations.js";
 
 export const authRoutes = Router();
 
 const limiter = authLimiter();
+
+authRoutes.post("/auth/invitations/check", authLimiter(), async (req, res) => {
+  const { invitationCode } = z.object({ invitationCode: invitationCodeSchema }).parse(req.body);
+  res.set("Cache-Control", "no-store").json(await invitations.inspectInvitation(invitationCode));
+});
 
 authRoutes.post("/auth/register", limiter, async (req, res) => {
   await auth.register(registerSchema.parse(req.body));

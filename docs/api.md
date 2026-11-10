@@ -49,7 +49,8 @@
 
 | Método | Ruta | Auth | Body | Respuesta | Origen |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/auth/register` | — | `{ fullName, email, password }` (8 caracteres a 72 bytes) | `201 { ok, message }` + email de verificación | `supabase.auth.signUp` |
+| POST | `/auth/invitations/check` | — | `{ invitationCode }` | `{ email }` para una invitación activa | Pantalla de registro invitado |
+| POST | `/auth/register` | — | `{ fullName, email, password, phone, invitationCode }` | `201 { ok, message }` y email de verificación | Consume la invitación de ese email en la misma transacción que crea la cuenta |
 | POST | `/auth/verify-email` | — | `{ token }` | `{ ok: true }` | Link de confirmación de Supabase |
 | POST | `/auth/resend-verification` | — | `{ email }` | Siempre `{ ok, message }` | — |
 | POST | `/auth/login` | — | `{ email, password }` | `Session` | `signInWithPassword` |
@@ -57,7 +58,13 @@
 | POST | `/auth/logout` | U | `{ refreshToken?, all?: boolean }` | `{ ok: true }` | `signOut` |
 | POST | `/auth/forgot-password` | — | `{ email }` | Siempre `{ ok, message }` | `resetPasswordForEmail` |
 | POST | `/auth/reset-password` | — | `{ token, password }` | `{ ok: true }` | `updateUser({ password })` |
-| GET | `/auth/me` | U | Header opcional `X-Business-Id` | `{ user: { id, email, emailVerified }, profile: { fullName, phone, avatarUrl }, businesses: SessionBusiness[], currentBusiness: SessionBusiness \| null }` | `lib/auth.tsx` |
+| GET | `/auth/me` | U | Header opcional `X-Business-Id` | `{ user: { id, email, emailVerified }, profile: { fullName, phone, avatarUrl }, businesses: SessionBusiness[], currentBusiness: SessionBusiness \| null, isSuperadmin }` | `lib/auth.tsx` |
+
+Toki Admin usa `POST /v1/admin/session` con `{ email, password, code }`. La API emite un token administrativo de 15 minutos después de validar la cuenta verificada y el código del autenticador. Cada código válido se consume una sola vez. Las demás rutas bajo `/v1/admin` requieren este token.
+
+- `GET /v1/admin/overview?days=30` devuelve totales globales y la distribución de pedidos por estado actual y canal. Acepta 7, 30 o 90 días.
+- `GET /v1/admin/users`, `GET /v1/admin/businesses` y `GET /v1/admin/orders` devuelven `{ data, nextCursor }`. Aceptan búsqueda `q` y paginación por `cursor`. Los pedidos exponen información operativa sin teléfono, domicilio ni notas del cliente.
+- `GET /v1/admin/invitations` lista las últimas 100 invitaciones. `POST /v1/admin/invitations` con `{ email }` genera una invitación y devuelve su código una sola vez. El código vence a los siete días. `POST /v1/admin/invitations/:id/revoke` revoca una invitación activa.
 
 ```ts
 Session = {

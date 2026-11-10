@@ -4,10 +4,28 @@ import { buildApp } from "../src/app.js";
 import { disconnectDb } from "../src/lib/db.js";
 import { testOutbox } from "../src/lib/mailer.js";
 import { sha256 } from "../src/lib/tokens.js";
-import { createBusiness, createUser, DB_AVAILABLE, ownerDb, truncateAll } from "./helpers.js";
+import { bearer, createBusiness, createUser, DB_AVAILABLE, ownerDb, truncateAll } from "./helpers.js";
+
+import { config } from "../src/config.js";
+import { Secret, TOTP } from "otpauth";
 
 const app = buildApp();
 const PASSWORD = "clave-segura-1";
+const PHONE = "+54 9 381 555 0000";
+
+async function inviteCode(email: string, state: { expiresAt?: Date; revokedAt?: Date } = {}) {
+  const code = crypto.randomUUID().replace(/-/g, "").repeat(2);
+  await ownerDb().signupInvitation.create({
+    data: { email: email.trim(), codeHash: sha256(code), expiresAt: new Date(Date.now() + 60_000), ...state }
+  });
+  return code;
+}
+
+async function registerInvited(email: string, fullName: string) {
+  await request(app).post("/v1/auth/register").send({
+    fullName, email, password: PASSWORD, phone: PHONE, invitationCode: await inviteCode(email)
+  }).expect(201);
+}
 
 /** Saca el token del último email enviado a `to`. */
 function tokenFromMail(to: string): string {
@@ -18,7 +36,7 @@ function tokenFromMail(to: string): string {
 }
 
 async function registerAndVerify(email: string, fullName = "Ana Pérez") {
-  await request(app).post("/v1/auth/register").send({ fullName, email, password: PASSWORD }).expect(201);
+  await registerInvited(email, fullName);
   await request(app).post("/v1/auth/verify-email").send({ token: tokenFromMail(email) }).expect(200);
 }
 
@@ -40,17 +58,82 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     await ownerDb().$disconnect();
   });
 
+  describe("invitaciones", () => {
+    it("solo permite que superadmin genere y revoque enlaces", async () => {
+      const admin = await createUser("superadmin@toki.test");
+      const owner = await createUser("ordinary-owner@toki.test");
+      await createBusiness(owner, "ordinary-owner");
+      const previous = { ids: config.SUPERADMIN_USER_IDS, email: config.SUPERADMIN_EMAIL, secret: config.SUPERADMIN_TOTP_SECRET };
+      const secret = new Secret({ size: 20 });
+      config.SUPERADMIN_USER_IDS = [admin.id];
+      config.SUPERADMIN_EMAIL = admin.email;
+      config.SUPERADMIN_TOTP_SECRET = secret.base32;
+      try {
+        await request(app).get("/v1/admin/invitations").expect(401);
+        await request(app).post("/v1/admin/invitations").set(bearer(owner)).send({ email: "invitee@toki.test" }).expect(401);
+        await request(app).get("/v1/admin/overview").set(bearer(admin)).expect(401);
+        const me = await request(app).get("/v1/auth/me").set(bearer(admin)).expect(200);
+        expect(me.body.isSuperadmin).toBe(true);
+        const code = new TOTP({ secret }).generate();
+        await request(app).post("/v1/admin/session").send({ email: owner.email, password: "password123", code }).expect(403);
+        await request(app).post("/v1/admin/session").send({ email: admin.email, password: "password123", code: "wrong" }).expect(400);
+        const session = await request(app).post("/v1/admin/session").send({ email: admin.email, password: "password123", code }).expect(200);
+        await request(app).post("/v1/admin/session").send({ email: admin.email, password: "password123", code }).expect(401);
+        const headers = { Authorization: `Bearer ${session.body.accessToken}` };
+        await request(app).get("/v1/auth/me").set(headers).expect(401);
+        const overview = await request(app).get("/v1/admin/overview?days=7").set(headers).expect(200);
+        expect(overview.body).toMatchObject({ days: 7, users: 2, businesses: 1, orders: 0 });
+        const users = await request(app).get("/v1/admin/users?q=ordinary").set(headers).expect(200);
+        expect(users.body.data).toMatchObject([{ email: owner.email, businesses: 1 }]);
+        expect(users.body.data[0]).not.toHaveProperty("passwordHash");
+        const businesses = await request(app).get("/v1/admin/businesses").set(headers).expect(200);
+        expect(businesses.body.data).toMatchObject([{ slug: "ordinary-owner" }]);
+        await request(app).get("/v1/admin/orders").set(headers).expect(200);
+        const created = await request(app).post("/v1/admin/invitations").set(headers).send({ email: "invitee@toki.test" }).expect(201);
+        const { code: inviteCode, id } = created.body;
+        expect(inviteCode).toMatch(/^[a-f0-9]{64}$/);
+        const list = await request(app).get("/v1/admin/invitations").set(headers).expect(200);
+        expect(list.body.data[0]).toMatchObject({ id, email: "invitee@toki.test" });
+        expect(list.body.data[0]).not.toHaveProperty("code");
+        expect(list.body.data[0]).not.toHaveProperty("codeHash");
+        await request(app).post("/v1/auth/invitations/check").send({ invitationCode: inviteCode }).expect(200);
+        await request(app).post(`/v1/admin/invitations/${id}/revoke`).set(headers).expect(200);
+        await request(app).post("/v1/auth/invitations/check").send({ invitationCode: inviteCode }).expect(400);
+      } finally {
+        config.SUPERADMIN_USER_IDS = previous.ids;
+        config.SUPERADMIN_EMAIL = previous.email;
+        config.SUPERADMIN_TOTP_SECRET = previous.secret;
+      }
+    });
+
+    it("rechaza altas sin invitación, vencidas o de otro email y consume el código una sola vez", async () => {
+      const input = { fullName: "Alta invitada", email: "single-use@toki.test", password: PASSWORD, phone: PHONE };
+      await request(app).post("/v1/auth/register").send(input).expect(400);
+      const expired = await inviteCode(input.email, { expiresAt: new Date(0) });
+      await request(app).post("/v1/auth/register").send({ ...input, invitationCode: expired }).expect(400);
+      const invitationCode = await inviteCode(input.email);
+      await request(app).post("/v1/auth/register").send({ ...input, email: "otro@toki.test", invitationCode }).expect(400);
+      const results = await Promise.all([
+        request(app).post("/v1/auth/register").send({ ...input, invitationCode }),
+        request(app).post("/v1/auth/register").send({ ...input, invitationCode })
+      ]);
+      expect(results.map(result => result.status).sort()).toEqual([201, 400]);
+      expect(await ownerDb().user.count({ where: { email: input.email } })).toBe(1);
+    });
+  });
+
   describe("registro y verificación", () => {
     it("registra, crea el perfil y manda el email de verificación", async () => {
       const res = await request(app)
         .post("/v1/auth/register")
-        .send({ fullName: "  Ana Pérez ", email: " Ana@Toki.TEST ", password: PASSWORD });
+        .send({ fullName: "  Ana Pérez ", email: " Ana@Toki.TEST ", password: PASSWORD, phone: PHONE, invitationCode: await inviteCode("ana@toki.test") });
       expect(res.status).toBe(201);
 
       const user = await ownerDb().user.findUnique({ where: { email: "ana@toki.test" }, include: { profile: true } });
       expect(user?.emailVerifiedAt).toBeNull();
       expect(user?.passwordHash).not.toContain(PASSWORD);
       expect(user?.profile?.fullName).toBe("Ana Pérez");
+      expect(user?.profile?.phone).toBe(PHONE);
 
       expect(testOutbox).toHaveLength(1);
       expect(testOutbox[0]!.subject).toMatch(/Confirmá tu email/);
@@ -59,7 +142,7 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     });
 
     it("en la BD solo queda el hash del token", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Beto", email: "beto@toki.test", password: PASSWORD });
+      await registerInvited("beto@toki.test", "Beto");
       const token = tokenFromMail("beto@toki.test");
       const rows = await ownerDb().emailToken.findMany({ where: { user: { email: "beto@toki.test" } } });
       expect(rows.map((r) => r.tokenHash)).toContain(sha256(token));
@@ -67,7 +150,7 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     });
 
     it("no deja entrar sin verificar, pero solo lo revela con la contraseña correcta", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Caro", email: "caro@toki.test", password: PASSWORD });
+      await registerInvited("caro@toki.test", "Caro");
       const wrong = await login("caro@toki.test", "otra-clave-1");
       expect(wrong.status).toBe(401);
       const right = await login("caro@toki.test");
@@ -76,7 +159,7 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     });
 
     it("verifica con el token y el token no se puede reusar", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Dani", email: "dani@toki.test", password: PASSWORD });
+      await registerInvited("dani@toki.test", "Dani");
       const token = tokenFromMail("dani@toki.test");
       await request(app).post("/v1/auth/verify-email").send({ token }).expect(200);
       const again = await request(app).post("/v1/auth/verify-email").send({ token });
@@ -87,7 +170,7 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     it("rechaza tokens inventados o vencidos", async () => {
       expect((await request(app).post("/v1/auth/verify-email").send({ token: "a".repeat(64) })).status).toBe(400);
 
-      await request(app).post("/v1/auth/register").send({ fullName: "Eva", email: "eva@toki.test", password: PASSWORD });
+      await registerInvited("eva@toki.test", "Eva");
       const token = tokenFromMail("eva@toki.test");
       await ownerDb().emailToken.updateMany({ where: { tokenHash: sha256(token) }, data: { expiresAt: new Date(Date.now() - 1000) } });
       expect((await request(app).post("/v1/auth/verify-email").send({ token })).status).toBe(400);
@@ -95,14 +178,14 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
 
     it("409 si el email ya tiene una cuenta verificada", async () => {
       await registerAndVerify("fede@toki.test");
-      const res = await request(app).post("/v1/auth/register").send({ fullName: "Otro", email: "FEDE@toki.test", password: PASSWORD });
+      const res = await request(app).post("/v1/auth/register").send({ fullName: "Otro", email: "FEDE@toki.test", password: PASSWORD, phone: PHONE, invitationCode: await inviteCode("fede@toki.test") });
       expect(res.status).toBe(409);
     });
 
-    it("re-registrar una cuenta sin verificar no pisa la contraseña e invalida el link anterior", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Gabi", email: "gabi@toki.test", password: PASSWORD });
+    it("reenviar la confirmación no pisa la contraseña e invalida el link anterior", async () => {
+      await registerInvited("gabi@toki.test", "Gabi");
       const first = tokenFromMail("gabi@toki.test");
-      await request(app).post("/v1/auth/register").send({ fullName: "Gabi", email: "gabi@toki.test", password: "otra-clave-9" }).expect(201);
+      await request(app).post("/v1/auth/resend-verification").send({ email: "gabi@toki.test" }).expect(200);
       const second = tokenFromMail("gabi@toki.test");
 
       expect((await request(app).post("/v1/auth/verify-email").send({ token: first })).status).toBe(400);
@@ -112,7 +195,7 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     });
 
     it("resend-verification responde igual exista o no, y solo manda email si hace falta", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Hugo", email: "hugo@toki.test", password: PASSWORD });
+      await registerInvited("hugo@toki.test", "Hugo");
       testOutbox.length = 0;
       const a = await request(app).post("/v1/auth/resend-verification").send({ email: "hugo@toki.test" });
       const b = await request(app).post("/v1/auth/resend-verification").send({ email: "nadie@toki.test" });
@@ -125,7 +208,7 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
       const res = await request(app).post("/v1/auth/register").send({ fullName: "A", email: "no-es-email", password: "corta" });
       expect(res.status).toBe(400);
       const fields = res.body.error.details.map((d: { field: string }) => d.field).sort();
-      expect(fields).toEqual(["email", "fullName", "password"]);
+      expect(fields).toEqual(["email", "fullName", "invitationCode", "password", "phone"]);
     });
   });
 
@@ -255,13 +338,13 @@ describe.runIf(DB_AVAILABLE)("auth", () => {
     });
 
     it("un token de verificación no sirve para resetear", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Ivo", email: "ivo@toki.test", password: PASSWORD });
+      await registerInvited("ivo@toki.test", "Ivo");
       const verifyToken = tokenFromMail("ivo@toki.test");
       expect((await request(app).post("/v1/auth/reset-password").send({ token: verifyToken, password: "x-clave-123" })).status).toBe(400);
     });
 
     it("resetear verifica el email de una cuenta pendiente", async () => {
-      await request(app).post("/v1/auth/register").send({ fullName: "Juli", email: "juli@toki.test", password: PASSWORD });
+      await registerInvited("juli@toki.test", "Juli");
       await request(app).post("/v1/auth/forgot-password").send({ email: "juli@toki.test" });
       await request(app).post("/v1/auth/reset-password").send({ token: tokenFromMail("juli@toki.test"), password: "nueva-clave-1" }).expect(200);
       expect((await login("juli@toki.test", "nueva-clave-1")).status).toBe(200);

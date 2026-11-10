@@ -84,6 +84,16 @@ request
 
 Sin sesión. Contexto de BD `anon` (las policies públicas solo muestran negocios activos y catálogo disponible). El checkout usa `service_role` porque `persist_order` solo lo ejecuta ese rol, igual que la Edge Function actual.
 
+### 4.5 Invitaciones y Toki Admin
+
+El registro requiere una invitación activa para el mismo email. El código aleatorio se guarda como hash SHA-256 en `auth.signup_invitations`, vence a los siete días y se consume dentro de la transacción que crea el usuario. La verificación del correo y las sesiones del panel de negocios mantienen su flujo habitual.
+
+La aplicación interna `toki-admin` se publica por separado en Vercel. Usa `POST /v1/admin/session` con email, contraseña y TOTP. La cuenta debe tener el correo verificado, su UUID en `SUPERADMIN_USER_IDS` y su email en `SUPERADMIN_EMAIL`; el código se valida con `SUPERADMIN_TOTP_SECRET`. El último paso temporal consumido se guarda en `auth.users.last_admin_totp_step` para impedir reutilizaciones, incluso entre procesos.
+
+La API emite un JWT de 15 minutos con audiencia `toki-admin` y tipo `admin-access`. Los endpoints administrativos validan ese token y vuelven a comprobar la cuenta permitida. Las sesiones normales del negocio no autorizan estas rutas. El frontend conserva el token administrativo en memoria y lo descarta al recargar.
+
+Las consultas globales pasan por `withDb(systemCtx, ...)` después de la autorización administrativa. Las invitaciones se crean y revocan desde esas mismas rutas protegidas. La puesta en marcha, las variables exclusivas de la API y el comando compilado del primer alta están en [la guía de Toki Admin](deploy.md#18-toki-admin-en-vercel-y-alta-del-primer-superadmin).
+
 ## 5. Acceso a datos y RLS
 
 ### 5.1 Roles de Postgres
