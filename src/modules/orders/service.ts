@@ -1,12 +1,13 @@
 // Tablero de pedidos, estados, cobro, venta presencial y comprobantes.
 // docs/api.md §9.
 import type { Prisma } from "@prisma/client";
-import { type Tx, withDb } from "../../lib/db.js";
+import { systemCtx, type Tx, withDb } from "../../lib/db.js";
 import { ApiError, notFound } from "../../lib/errors.js";
 import { toNumber } from "../../lib/money.js";
 import { presignGet } from "../../lib/r2.js";
 import type { BusinessScope } from "../../lib/request.js";
-import type { ChangeStatusInput, ListOrdersQuery, ManualSaleInput } from "./schemas.js";
+import type { ChangeStatusInput, ListOrdersQuery, ManualSaleInput, WhatsappOrderInput } from "./schemas.js";
+import { buildOrderPayload, persistOrder } from "./pricing.js";
 
 const orderInclude = {
   items: {
@@ -226,6 +227,17 @@ export async function markPaid({ ctx, businessId }: BusinessScope, id: string) {
     if (exists === 0) throw notFound("El pedido no existe.");
     await tx.$executeRaw`select public.mark_order_paid(${id}::uuid)`;
     return reload(tx, businessId, id);
+  });
+}
+
+export async function createWhatsappOrder({ businessId }: BusinessScope, input: WhatsappOrderInput) {
+  // The authenticated route resolves membership before calling the restricted RPC.
+  return withDb(systemCtx, async (tx) => {
+    const business = await tx.business.findUnique({ where: { id: businessId } });
+    if (!business) throw notFound("No encontramos el negocio.");
+    const payload = await buildOrderPayload(tx, business, input);
+    const order = await persistOrder(tx, { ...payload, source: "whatsapp" });
+    return reload(tx, businessId, order.id);
   });
 }
 

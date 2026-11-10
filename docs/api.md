@@ -361,6 +361,7 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 | POST | `/orders/:id/modification-seen` | M | — | Pedido | Agente v3: el local vio los cambios del cliente (`modification_seen_at = now()`); la tarjeta deja de destacarse |
 | POST | `/orders/:id/mark-paid` | M | — | Pedido | RPC `mark_order_paid` |
 | POST | `/orders/manual` | M | `ManualSaleInput` | `201` pedido creado | RPC `create_manual_sale` (POS) |
+| POST | `/orders/whatsapp` | M | `{ customer: { name, phone }, orderType, deliveryAddress?, notes?, paymentMethod, items }` | `201` pedido creado | Pedido cargado por el local con origen WhatsApp. Calcula precios y envío en el servidor y deja el pedido y el pago pendientes. |
 | GET | `/orders/:id/payment-proofs` | M | — | `{ data: [{ id, status, mediaType, createdAt, reviewedAt, url }] }` (`url` firmada, 10 min) | `order_payment_proofs` + `createSignedUrl` |
 | PATCH | `/payment-proofs/:id` | M | `{ status: "approved" \| "rejected" }` | Comprobante | `order_payment_proofs.update` |
 | POST | `/orders/events/ticket` | M | — | `{ ticket, expiresIn: 60 }` | — |

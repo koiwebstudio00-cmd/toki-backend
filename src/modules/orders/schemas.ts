@@ -1,5 +1,16 @@
 // docs/api.md §9.
 import { z } from "zod";
+import { checkoutSchema } from "../public/schemas.js";
+
+export const whatsappOrderSchema = checkoutSchema.omit({ couponCode: true }).extend({
+  customer: checkoutSchema.shape.customer.extend({
+    phone: z.string().trim().max(30).transform((value) => value.replace(/[+\s()-]/g, "")).pipe(
+      z.string().regex(/^[1-9]\d{9,14}$/, "Ingresá el WhatsApp con código de país y de área.")
+    )
+  })
+});
+
+export type WhatsappOrderInput = z.infer<typeof whatsappOrderSchema>;
 import { isoDate, money, uuid } from "../../lib/validation.js";
 
 export const ORDER_STATUSES = [

@@ -244,24 +244,36 @@ describe.runIf(DB_AVAILABLE)("canal nativo WhatsApp de punta a punta", () => {
   });
 
 
-  it("recibe el carrito web completo con cupón incluso si llega otra frase en la ráfaga", async () => {
+  it("confirma el carrito web con cupón y envía el comprobante sin pedirle al modelo que lo redacte", async () => {
     await ownerDb().business.update({ where: { id: shop.businessId }, data: { whatsappPhone: "543810000000" } });
     await ownerDb().coupon.create({ data: { businessId: shop.businessId, code: "WEB10", discountType: "percent", discountValue: 10 } });
     const checkout = await prepareCatalog("shop-test", { requestId: randomUUID(), customer: { name: "Ana", phone: "543815550000" }, orderType: "takeaway", paymentMethod: "cash", couponCode: "WEB10", items: [{ productId: shop.sodaId, quantity: 2 }] });
     await receive(event(checkout.message)); await receive(event("Gracias"));
-    const llm = new MockLanguageModelV4({ doGenerate: [call("recibir_pedido_catalogo", {}), answer("Revisá y confirmá tu pedido del catálogo.")] });
+    const llm = new MockLanguageModelV4({ doGenerate: [call("recibir_pedido_catalogo", {}), answer("Confirmar pedido. Resumen generado por el modelo.")] });
     await processNextAgentTurn({ model: llm }); // Older burst member is superseded.
     await processNextAgentTurn({ model: llm });
     const approval = await ownerDb().agentApproval.findFirstOrThrow();
     expect(approval.toolName).toBe("recibir_pedido_catalogo");
     expect((approval.quote as { total: number }).total).toBe(4500);
     expect(await ownerDb().order.count()).toBe(0); expect(await ownerDb().whatsappOrderDraft.count()).toBe(0);
+    const prepared = await ownerDb().agentTurn.findFirstOrThrow({ where: { status: "ready" } });
+    expect(prepared.reply?.match(/Confirmar pedido/g)).toHaveLength(1);
+    expect(prepared.reply).not.toContain("Resumen generado por el modelo");
     await ownerDb().agentTurn.updateMany({ data: { status: "sent" } });
     const decision = await receive(event("Confirmar", { metadata: { interactiveType: "button_reply", interactiveId: approvalButtons(approval.id)[0]!.payload } }));
-    await consumeApproval(decision, approvalButtons(approval.id)[0]!.payload);
+    const misleadingReply = new MockLanguageModelV4({ doGenerate: answer("Desde este mensaje no puedo ejecutarla.") });
+    await processNextAgentTurn({ model: misleadingReply });
     const order = await ownerDb().order.findFirstOrThrow();
     expect(Number(order.total)).toBe(4500); expect(order.couponCode).toBe("WEB10"); expect(order.source).toBe("web");
     expect(order.whatsappConversationId).toBe(decision.conversationId);
+    expect(misleadingReply.doGenerateCalls).toHaveLength(0);
+    const send = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: { messageId: "web-receipt" } })));
+    vi.stubGlobal("fetch", send);
+    await processNextAgentTurn();
+    const body = JSON.parse((send.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.message).toContain(`Recibimos tu pedido *${order.orderCode}*`);
+    expect(body.message).toContain(`/shop-test/order/${order.orderCode}`);
+    expect(await ownerDb().order.count()).toBe(1);
   });
 
   it("una solicitud web editada no se reconstruye ni crea un pedido alternativo", async () => {

@@ -108,6 +108,37 @@ describe.runIf(DB_AVAILABLE)("pedidos", () => {
     });
   });
 
+  describe("carga manual de WhatsApp", () => {
+    it("registra un envío por transferencia pendiente y permite consultar su seguimiento", async () => {
+      const result = await request(app).post("/v1/orders/whatsapp").set(bearer(s.staff)).send(checkoutBody(s, {
+        customer: { name: "Marta", phone: "+54 9 381 555 0123" },
+        orderType: "delivery",
+        deliveryAddress: "San Martín 123",
+        paymentMethod: "transfer",
+        notes: "Tocar timbre",
+        total: 1
+      })).expect(201);
+      expect(result.body).toMatchObject({
+        source: "whatsapp", status: "pending", paymentStatus: "pending",
+        paymentMethod: "transfer", deliveryAddress: "San Martín 123",
+        customerPhone: "5493815550123", notes: "Tocar timbre", deliveryFee: 500, total: 10500
+      });
+      expect(result.body.payments[0]).toMatchObject({ status: "pending", amount: 10500 });
+      await request(app).get(`/v1/public/businesses/${s.slug}/orders/${result.body.orderCode}`).expect(200);
+      await request(app).post(`/v1/orders/${result.body.id}/mark-paid`).set(bearer(s.staff)).expect(200);
+    });
+
+    it("exige acceso al negocio y rechaza productos ajenos sin crear un pedido", async () => {
+      const other = await createUser("manual-whatsapp-otro@example.test");
+      const otherBusiness = await createBusiness(other, "manual-whatsapp-otro");
+      const input = checkoutBody(s, { customer: { name: "Marta", phone: "5493815550123" } });
+      await request(app).post("/v1/orders/whatsapp").send(input).expect(401);
+      await request(app).post("/v1/orders/whatsapp").set(bearer(s.staff)).set("X-Business-Id", otherBusiness).send(input).expect(403);
+      await request(app).post("/v1/orders/whatsapp").set(bearer(other)).send(input).expect(400);
+      expect(await ownerDb().order.count({ where: { source: "whatsapp" } })).toBe(0);
+    });
+  });
+
   describe("cobro", () => {
     it("marca pagado el pedido y su pago", async () => {
       const res = await request(app).post(`/v1/orders/${orderId}/mark-paid`).set(bearer(s.owner)).expect(200);

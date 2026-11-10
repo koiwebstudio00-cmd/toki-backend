@@ -6,7 +6,7 @@ import { systemCtx, withDb } from "../../lib/db.js";
 import { zernioFetch, zernioDownload, trustedWhatsappMediaUrl } from "../../lib/zernio.js";
 import { createNativeAgent } from "./native-agent.js";
 import { audioMessage } from "./runtime.js";
-import { requestApproval, consumeApproval, approvalButtons, approvalSummary } from "./approvals.js";
+import { requestApproval, consumeApproval, approvalButtons, approvalSummary, catalogApprovalReceipt } from "./approvals.js";
 import { saveChannelProof } from "./channel-media.js";
 import { inboxEvent } from "./webhook.js";
 import * as repo from "./channel-repo.js";
@@ -53,6 +53,13 @@ async function generate(turn: AgentTurn, options: WorkerOptions) {
   if (!quota) { await fail(turn, "daily_limit"); return; }
   const event = inboxEvent.safeParse(access.latest!.rawPayload);
   const outcome = await consumeApproval(turn, event.success && event.data.metadata?.interactiveType === "button_reply" ? event.data.metadata.interactiveId : undefined);
+  const catalogReceipt = catalogApprovalReceipt(outcome);
+  if (catalogReceipt) {
+    await withDb(systemCtx, tx => repo.readyReply(tx, turn.id, catalogReceipt, null, {
+      inputTokens: 0, outputTokens: 0, tools: []
+    }));
+    return;
+  }
   const history = await withDb(systemCtx, tx => repo.messageHistory(tx, turn));
   // A checkout request can be followed by a short message in the same burst.
   // Offer only the most recent reference since the last outbound reply.
@@ -78,7 +85,12 @@ async function generate(turn: AgentTurn, options: WorkerOptions) {
   const result = await agent.generate({ messages, abortSignal: deadline });
   const pending = await withDb(systemCtx, tx => repo.pendingApproval(tx, turn.messageId));
   let reply = result.text.trim();
-  if (pending) reply = `${reply}\n\n${approvalSummary(pending.quote)}`.trim();
+  if (pending) {
+    const summary = approvalSummary(pending.quote);
+    reply = pending.toolName === "recibir_pedido_catalogo"
+      ? `Revisá el resumen y tocá *Confirmar* para enviar el pedido.\n\n${summary}`
+      : `${reply}\n\n${summary}`.trim();
+  }
   if (!reply || result.finishReason !== "stop" || reply.length > (pending ? 1024 : 4096)) throw new Error("Incomplete response");
   // Recheck after model/tool work: takeover, pause, reconnect and newer messages win.
   const fresh = await withDb(systemCtx, tx => repo.accessForTurn(tx, turn, turn.accountId));

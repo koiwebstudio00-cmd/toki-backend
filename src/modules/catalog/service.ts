@@ -114,7 +114,7 @@ export async function receiveCatalog(data: z.infer<typeof receiveCatalogSchema>,
       const transfer = paymentMethod === "transfer" ? await tx.paymentSettings.findUnique({ where: { businessId } }) : null;
       return {
         ok: true, yaExistia: Boolean(saved.order_id), orderCode: order.orderCode, total: Number(order.total), status: order.status,
-        paymentMethod, track_url: `${config.FRONT_URL.replace(/\/+$/, "")}/${business.slug}/order/${order.orderCode}`,
+        paymentMethod, currency: business.currency || "ARS", track_url: `${config.FRONT_URL.replace(/\/+$/, "")}/${business.slug}/order/${order.orderCode}`,
         ...(transfer ? { transferencia: { alias: transfer.transferAlias, cbu_cvu: transfer.transferCbu, titular: transfer.transferHolder, banco: transfer.transferBank } } : {})
       };
     });

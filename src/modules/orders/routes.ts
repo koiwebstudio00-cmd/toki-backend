@@ -6,7 +6,7 @@ import { businessScope } from "../../lib/request.js";
 import { idParams } from "../../lib/validation.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireBusiness } from "../../middleware/business.js";
-import { cashDeliverySchema, changeStatusSchema, listOrdersQuery, manualSaleSchema, reviewProofSchema } from "./schemas.js";
+import { cashDeliverySchema, changeStatusSchema, listOrdersQuery, manualSaleSchema, reviewProofSchema, whatsappOrderSchema } from "./schemas.js";
 import * as svc from "./service.js";
 import { openEventStream } from "./stream.js";
 import { issueTicket } from "../../lib/tickets.js";
@@ -38,6 +38,10 @@ orderRoutes.get("/", async (req, res) => {
 
 orderRoutes.post("/manual", async (req, res) => {
   res.status(201).json(await svc.createManualSale(businessScope(req), manualSaleSchema.parse(req.body)));
+});
+
+orderRoutes.post("/whatsapp", async (req, res) => {
+  res.status(201).json(await svc.createWhatsappOrder(businessScope(req), whatsappOrderSchema.parse(req.body)));
 });
 
 orderRoutes.get("/imported", async (req,res) => { res.json(await transfer.list(businessScope(req),z.coerce.number().int().min(1).default(1).parse(req.query.page))); });
