@@ -7,7 +7,7 @@ import { ApiError, notFound } from "../../lib/errors.js";
 import { isOpen } from "../businesses/service.js";
 import { checkoutSchema, type CheckoutInput } from "../public/schemas.js";
 import { buildOrderPayload, persistOrder } from "../orders/pricing.js";
-import { catalogMessage, catalogReference, messageHash, quoteHash } from "./message.js";
+import { catalogMessage, catalogReference, matchesCatalogMessage, messageHash, quoteHash } from "./message.js";
 
 export const prepareCatalogSchema = checkoutSchema.extend({ requestId: z.string().uuid() });
 export const receiveCatalogSchema = z.object({
@@ -31,9 +31,20 @@ function assertSelectedOptions(input: CheckoutInput, quote: Awaited<ReturnType<t
 export async function prepareCatalog(slug: string, data: z.infer<typeof prepareCatalogSchema>) {
   const { requestId, ...input } = data;
   return withDb(systemCtx, async tx => {
-    const business = await tx.business.findFirst({ where: { slug, isActive: true } });
+    const business = await tx.business.findFirst({
+      where: { slug, isActive: true },
+      include: {
+        botSettings: { select: { isEnabled: true, enabledTools: true } },
+        whatsappIntegration: { select: { isActive: true, provider: true, providerExternalId: true, phoneNumber: true } }
+      }
+    });
     if (!business) throw notFound("No encontramos este negocio.");
-    const phone = business.whatsappPhone?.replace(/\D/g, "");
+    const integration = business.whatsappIntegration;
+    const agentPhone = business.botSettings?.isEnabled && business.botSettings.enabledTools.includes("create_orders")
+      && integration?.isActive && integration.provider === "zernio" && integration.providerExternalId
+      ? integration.phoneNumber?.replace(/\D/g, "")
+      : undefined;
+    const phone = agentPhone && /^[1-9]\d{6,14}$/.test(agentPhone) ? agentPhone : business.whatsappPhone?.replace(/\D/g, "");
     if (!phone) throw invalid("El negocio todavía no tiene WhatsApp configurado.");
     if (!(await isOpen(tx, business.id))) throw new ApiError("BUSINESS_CLOSED", "El negocio está cerrado en este momento.");
     // Serialize identical prepare retries without creating an order or reserving stock.
@@ -75,7 +86,7 @@ export async function receiveCatalog(data: z.infer<typeof receiveCatalogSchema>,
       if (!reference) throw invalid("El mensaje no contiene una solicitud del catálogo válida.");
       const rows = await tx.$queryRaw<StoredRequest[]>`select * from public.catalog_requests where id = ${reference}::uuid and business_id = ${businessId}::uuid for update`;
       const saved = rows[0];
-      if (!saved || saved.message_hash !== messageHash(inbound!.content!)) throw invalid("El mensaje fue modificado o la referencia no pertenece a este negocio. Volvé al carrito y enviá el mensaje completo sin editarlo.");
+      if (!saved || !matchesCatalogMessage(saved.message, inbound!.content!)) throw invalid("El mensaje fue modificado o la referencia no pertenece a este negocio. Volvé al carrito y enviá el mensaje completo sin editarlo.");
       if (saved.conversation_id && saved.conversation_id !== conversationId) throw invalid("La solicitud ya está asociada a otra conversación.");
       const business = await tx.business.findFirst({ where: { id: businessId, isActive: true } });
       if (!business) throw notFound("El negocio no está disponible.");

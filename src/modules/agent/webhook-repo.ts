@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Tx } from "../../lib/db.js";
 import { ApiError } from "../../lib/errors.js";
 import { id, inboxEvent, envelope } from "./channel-schemas.js";
+import { findConversationForContact } from "../whatsapp/contact.js";
 import * as repo from "./channel-repo.js";
 export async function storeWebhook(tx: Tx, body: unknown, event: ReturnType<typeof envelope.parse>) {
 
@@ -49,8 +50,12 @@ export async function storeWebhook(tx: Tx, body: unknown, event: ReturnType<type
     if (input.message.direction !== "incoming") return { accepted: true };
     const contactId = input.message.sender.businessScopedUserId ?? input.message.sender.id;
     const phone = input.message.sender.phoneNumber ?? (/^\+?\d{7,16}$/.test(input.message.sender.id) ? input.message.sender.id : null);
-    const conversation = await tx.whatsappConversation.upsert({ where: { businessId_contactId: { businessId, contactId } },
-      create: { businessId, contactId, phone }, update: phone ? { phone } : {} });
+    const existing = await findConversationForContact(tx, businessId, contactId, phone);
+    const conversation = existing ?? await tx.whatsappConversation.upsert({
+      where: { businessId_contactId: { businessId, contactId } },
+      create: { businessId, contactId, phone },
+      update: {}
+    });
     await tx.$queryRaw`select id from public.whatsapp_conversations where id=${conversation.id}::uuid for update`;
     // Original provider timestamp stops delayed/redelivered messages reopening the 24h window.
     const sentAt = new Date(input.message.sentAt);
@@ -62,7 +67,10 @@ export async function storeWebhook(tx: Tx, body: unknown, event: ReturnType<type
       rawPayload: repo.json(input), createdAt: sentAt }], skipDuplicates: true });
     if (!inserted.count) return { accepted: true, duplicate: true };
     const message = await tx.whatsappMessage.findFirstOrThrow({ where: { businessId, providerMessageId: input.message.platformMessageId } });
-    if (!conversation.lastMessageAt || sentAt > conversation.lastMessageAt) await tx.whatsappConversation.update({ where: { id: conversation.id }, data: { lastMessageAt: sentAt } });
+    await tx.whatsappConversation.updateMany({
+      where: { id: conversation.id, businessId, OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: sentAt } }] },
+      data: { lastMessageAt: sentAt, ...(phone ? { phone } : {}) }
+    });
     if (input.metadata?.standby) await repo.pauseConversation(tx, { businessId, conversationId: conversation.id }, "Otra aplicación está atendiendo la conversación.");
     await tx.agentTurn.create({ data: { businessId, conversationId: conversation.id, messageId: message.id,
       accountId: input.account.accountId, providerConversationId: input.conversation.id,

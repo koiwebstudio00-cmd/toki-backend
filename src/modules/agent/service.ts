@@ -15,6 +15,7 @@ import { newPaymentProofKey, putObject } from "../../lib/r2.js";
 import { zernioDownload } from "../../lib/zernio.js";
 import { isOpen } from "../businesses/service.js";
 import { buildOrderPayload, persistOrder, type PricingItem } from "../orders/pricing.js";
+import { findConversationForContact } from "../whatsapp/contact.js";
 import {
   buildClock,
   buildMenu,
@@ -78,10 +79,15 @@ export async function resolveIntegration(accountId: string) {
   });
 }
 
-/** Upsert por (business_id, contact_id). No pisa `status`: si el humano tomó la conversación, sigue tomada. */
+/** Reutiliza el chat del número dentro del negocio y conserva su estado. */
 export async function upsertConversation(input: UpsertConversationInput) {
-  const row = await withDb(systemCtx, (tx) =>
-    tx.whatsappConversation.upsert({
+  const row = await withDb(systemCtx, async (tx) => {
+    const existing = await findConversationForContact(tx, input.businessId, input.contactId, input.phone);
+    if (existing) return tx.whatsappConversation.update({
+      where: { id: existing.id, businessId: input.businessId },
+      data: { ...(input.phone ? { phone: input.phone } : {}), lastMessageAt: new Date() }
+    });
+    return tx.whatsappConversation.upsert({
       where: { businessId_contactId: { businessId: input.businessId, contactId: input.contactId } },
       create: {
         businessId: input.businessId,
@@ -93,8 +99,8 @@ export async function upsertConversation(input: UpsertConversationInput) {
         ...(input.phone ? { phone: input.phone } : {}),
         lastMessageAt: new Date()
       }
-    })
-  );
+    });
+  });
   return {
     conversationId: row.id,
     contactId: row.contactId,

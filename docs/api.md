@@ -426,8 +426,8 @@ ManualSaleInput = {
 | GET | `/whatsapp/integration` | A | — | `{ provider, isActive, phoneNumber, connectedAt }` (sin tokens) | `whatsapp_integrations.select` |
 | POST | `/whatsapp/connect/start` | A | `{ redirectUrl, onboarding?: "business_app" \| "api" }` | `{ authUrl, state, profileId }` | Edge `zernio-whatsapp-start` |
 | POST | `/whatsapp/connect/complete` | A | `{ profileId, accountId, username?, rawQuery? }` | `{ success: true, integration }` | Edge `zernio-whatsapp-complete` |
-| GET | `/conversations` | M | `?status=open\|handoff\|closed&reason=&page=` | Conversaciones con cliente y `currentCase` (motivo, resumen, pedido y reembolsos), orden por `lastMessageAt`. `reason` filtra por motivo de derivación | `ConversationsPage` |
-| GET | `/conversations/:id/messages` | M | `?before=&limit=50` | `{ data: messages, lastOrder: { orderCode, status, total } \| null, currentCase }` | `whatsapp_messages.select` + `orders` por teléfono |
+| GET | `/conversations` | M | `?status=open\|handoff\|closed&reason=&page=` | Un chat por teléfono dentro del negocio, con `customer` y `contactName` (perfil de WhatsApp, si está disponible). El chat con una derivación o un caso activo tiene prioridad. El orden usa el último mensaje del grupo. | `ConversationsPage` |
+| GET | `/conversations/:id/messages` | M | `?before=&limit=50` | `{ data: messages, lastOrder: { orderCode, status, total } \| null, currentCase }`. Incluye el historial de los chats del mismo número dentro del negocio. | `whatsapp_messages.select` + `orders` por teléfono |
 | PATCH | `/conversations/:id/status` | M | `{ status: "open" \| "handoff" \| "closed" }` | Conversación | Botón Tomar/Devolver (`whatsapp_conversations.update`). Agente v3: pasar a `open` resuelve el caso abierto y limpia `currentCaseId` |
 
 **Services:**
@@ -495,7 +495,7 @@ Todas con `X-Api-Key` (**K**). Cada request lleva `businessId` y `conversationId
 | Método | Ruta | Body / Query | SQL / acción | Origen en `toki-agent-v2.json` |
 | --- | --- | --- | --- | --- |
 | GET | `/agent/integrations/by-account/:accountId` | — | `whatsapp_integrations` activa → `{ businessId, business: {...}, botEnabled }` | `rest/v1/whatsapp_integrations` |
-| POST | `/agent/conversations/upsert` | `{ businessId, contactId, phone? }` | Upsert por `(business_id, contact_id)`; no pisa `status` | `rest/v1/whatsapp_conversations` |
+| POST | `/agent/conversations/upsert` | `{ businessId, contactId, phone? }` | Reutiliza el chat del mismo teléfono dentro del negocio o hace upsert por `(business_id, contact_id)`. Conserva `status`. | `rest/v1/whatsapp_conversations` |
 | POST | `/agent/messages` | `{ businessId, conversationId, direction, messageType, content?, providerMessageId?, rawPayload?, aiIntent? }` | Insert; devuelve `{ duplicate: false, id, createdAt }`, o `{ duplicate: true }` si `providerMessageId` ya existe | `rest/v1/whatsapp_messages` |
 | GET | `/agent/conversations/:id` | `?businessId=` | `{ id, contactId, phone, status, handoffReason, lastMessageAt }`. El workflow lo relee antes de enviar: si una persona tomó la conversación, el bot se calla | `rest/v1/whatsapp_conversations?select=status` |
 | GET | `/agent/conversations/:id/messages` | `?businessId=&after=&direction=&limit=50` | `{ data, count }`. Con `after` + `direction=inbound` responde "¿el cliente siguió escribiendo mientras esperábamos la ráfaga?" | `rest/v1/whatsapp_messages?created_at=gt.` |

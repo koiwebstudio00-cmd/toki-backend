@@ -10,6 +10,8 @@ import { ApiError, notFound } from "../../lib/errors.js";
 import { toNumber } from "../../lib/money.js";
 import type { BusinessScope } from "../../lib/request.js";
 import { zernioFetch } from "../../lib/zernio.js";
+import { contactConversationOrder, whatsappPhoneVariants } from "./contact.js";
+import { latestProfileNames, listContactThreads } from "./conversations-repo.js";
 import type { CompleteConnectInput, ListConversationsQuery, ListMessagesQuery, StartConnectInput } from "./schemas.js";
 
 interface ZernioProfileResponse {
@@ -197,23 +199,47 @@ function toConversationDto(c: ConversationRow) {
 }
 
 export async function listConversations({ ctx, businessId }: BusinessScope, q: ListConversationsQuery) {
-  const where: Prisma.WhatsappConversationWhereInput = {
-    businessId,
-    ...(q.status ? { status: q.status } : {}),
-    ...(q.reason ? { handoffReason: q.reason } : {})
-  };
-  const [rows, total] = await withDb(ctx, async (tx) => [
-    await tx.whatsappConversation.findMany({
-      where,
+  const { data, total } = await withDb(ctx, async (tx) => {
+    const page = await listContactThreads(tx, businessId, q);
+    if (!page.ids.length) return { data: [], total: page.total };
+    const rows = await tx.whatsappConversation.findMany({
+      where: { businessId, id: { in: page.ids } },
+      include: conversationInclude
+    });
+    const phones = [...new Set(rows.flatMap(row => whatsappPhoneVariants(row.phone)))];
+    const aliases = await tx.whatsappConversation.findMany({
+      where: { businessId, OR: [{ id: { in: page.ids } }, { phone: { in: phones } }] },
       include: conversationInclude,
-      orderBy: [{ lastMessageAt: "desc" }, { createdAt: "desc" }],
-      skip: (q.page - 1) * q.limit,
-      take: q.limit
-    }),
-    await tx.whatsappConversation.count({ where })
-  ]);
+      orderBy: [...contactConversationOrder]
+    });
+    const names = await latestProfileNames(tx, businessId, aliases.map(alias => alias.id));
+    const customerPhones = (phone: string | null) => {
+      const variants = whatsappPhoneVariants(phone);
+      const localMobile = /^549(\d{10})$/.exec(variants[0] ?? "")?.[1];
+      return localMobile ? [...variants, localMobile] : variants;
+    };
+    const customers = await tx.customer.findMany({
+      where: { businessId, phone: { in: [...new Set(rows.flatMap(row => customerPhones(row.phone)))] } },
+      select: conversationInclude.customer.select
+    });
+    const data = page.ids.flatMap(id => {
+      const row = rows.find(candidate => candidate.id === id);
+      if (!row) return [];
+      const variants = whatsappPhoneVariants(row.phone);
+      const threads = aliases.filter(alias => alias.id === id || (alias.phone && variants.includes(alias.phone)));
+      const linkedCustomer = row.customer ?? threads.find(alias => alias.customer)?.customer;
+      const matches = customers.filter(customer => customerPhones(row.phone).includes(customer.phone));
+      const customer = linkedCustomer ?? (matches.length === 1 ? matches[0]! : null);
+      const threadIds = new Set(threads.map(alias => alias.id));
+      const profile = names.filter(name => threadIds.has(name.conversationId))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+      return [{ ...toConversationDto(row), customer, contactName: profile?.name ?? null,
+        lastMessageAt: threads[0]?.lastMessageAt ?? row.lastMessageAt }];
+    });
+    return { data, total: page.total };
+  });
   return {
-    data: rows.map(toConversationDto),
+    data,
     meta: { page: q.page, limit: q.limit, total, pages: Math.max(1, Math.ceil(total / q.limit)) }
   };
 }
@@ -231,13 +257,18 @@ export async function listMessages({ ctx, businessId }: BusinessScope, conversat
     });
     if (!conversation) throw notFound("La conversación no existe.");
 
+    const phones = whatsappPhoneVariants(conversation.phone);
+    const aliases = phones.length ? await tx.whatsappConversation.findMany({
+      where: { businessId, phone: { in: phones } }, select: { id: true }
+    }) : [];
+    const threadIds = [conversationId, ...aliases.map(alias => alias.id)];
     const messages = await tx.whatsappMessage.findMany({
       where: {
-        conversationId,
+        conversationId: { in: threadIds },
         businessId,
         ...(q.before ? { createdAt: { lt: new Date(q.before) } } : {})
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: q.limit
     });
 
@@ -245,8 +276,8 @@ export async function listMessages({ ctx, businessId }: BusinessScope, conversat
       where: {
         businessId,
         OR: [
-          { whatsappConversationId: conversationId },
-          ...(conversation.phone ? [{ customerPhone: conversation.phone }] : [])
+          { whatsappConversationId: { in: threadIds } },
+          ...(conversation.phone ? [{ customerPhone: { in: phones.length ? phones : [conversation.phone] } }] : [])
         ]
       },
       orderBy: { createdAt: "desc" },

@@ -65,6 +65,46 @@ describe.runIf(DB_AVAILABLE)("canal nativo WhatsApp de punta a punta", () => {
     await acceptWebhook(event()); expect(await ownerDb().agentTurn.count()).toBe(1);
   });
 
+  it("reúne el historial por teléfono, conserva la derivación y muestra el nombre del contacto", async () => {
+    const first = await receive(event("Mensaje anterior"));
+    await ownerDb().whatsappConversation.update({
+      where: { id: first.conversationId }, data: { status: "handoff", handoffReason: "pedido_humano" }
+    });
+    const alias = await ownerDb().whatsappConversation.create({ data: {
+      businessId: shop.businessId, contactId: "old-provider-id", phone: "543815550000"
+    } });
+    await ownerDb().whatsappMessage.create({ data: {
+      businessId: shop.businessId, conversationId: alias.id, direction: "inbound", content: "Historial del otro chat"
+    } });
+    const otherOwner = await createUser("owner@whatsapp-other.test");
+    const otherBusinessId = await createBusiness(otherOwner, "whatsapp-other");
+    await ownerDb().whatsappConversation.create({ data: {
+      businessId: otherBusinessId, contactId: "same-number", phone: "+543815550000"
+    } });
+    const next = event("Mensaje nuevo");
+    await acceptWebhook({ ...next, message: { ...next.message, sender: {
+      id: "different-provider-id", businessScopedUserId: "new-scoped-id", phoneNumber: "+543815550000", name: "Ana Pérez"
+    } } });
+    const received = await ownerDb().whatsappMessage.findFirstOrThrow({
+      where: { businessId: shop.businessId, providerMessageId: next.message.platformMessageId }
+    });
+    expect(received.conversationId).toBe(first.conversationId);
+    const turn = await ownerDb().agentTurn.findUniqueOrThrow({ where: { messageId: received.id } });
+    expect(turn.status).toBe("skipped");
+
+    const inbox = await request(app).get("/v1/conversations?limit=1").set(bearer(shop.owner)).expect(200);
+    expect(inbox.body.meta.total).toBe(1);
+    expect(inbox.body.data).toMatchObject([{ id: first.conversationId, status: "handoff", contactName: "Ana Pérez" }]);
+    const otherInbox = await request(app).get("/v1/conversations").set(bearer(otherOwner)).expect(200);
+    expect(otherInbox.body.data).toMatchObject([{ contactName: null }]);
+    const messages = await request(app).get(`/v1/conversations/${first.conversationId}/messages`).set(bearer(shop.owner)).expect(200);
+    expect(messages.body.data.map((message: { content: string }) => message.content)).toEqual(expect.arrayContaining([
+      "Mensaje anterior", "Historial del otro chat", "Mensaje nuevo"
+    ]));
+    expect(messages.body.data).toHaveLength(3);
+    await request(app).get(`/v1/conversations/${alias.id}/messages`).set(bearer(otherOwner)).expect(404);
+  });
+
   it("genera, persiste el envío y registra la respuesta sin volver a llamar al modelo", async () => {
     const turn = await receive(); const llm = model();
     expect(await processNextAgentTurn({ model: llm })).toBe(true);

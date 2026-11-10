@@ -5,7 +5,8 @@ export const inboxEvent = envelope.extend({
   account: z.object({ accountId: id }), conversation: z.object({ id }),
   message: z.object({ id, platformMessageId: id, platform: z.literal("whatsapp"), direction: z.enum(["incoming", "outgoing"]),
     text: z.string().max(16000).nullable(), sentAt: z.string().datetime({ offset: true }), sentVia: z.string().nullable().optional(), source: z.string().optional(),
-    sender: z.object({ id, phoneNumber: z.string().nullable().optional(), businessScopedUserId: id.optional() }),
+    sender: z.object({ id, phoneNumber: z.string().nullable().optional(), businessScopedUserId: id.optional(),
+      name: z.string().nullish().transform(value => value?.trim().slice(0, 160) || undefined) }),
     attachments: z.array(z.object({ type: z.string(), url: z.string().url(), mimeType: z.string().optional() })).max(10).default([])
   }),
   metadata: z.object({ standby: z.boolean().optional(), interactiveId: z.string().max(300).optional(), interactiveType: z.string().optional() }).passthrough().nullish(),

@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { disconnectDb, withDb } from "../src/lib/db.js";
-import { catalogReference, messageHash } from "../src/modules/catalog/message.js";
+import { catalogReference, matchesCatalogMessage, messageHash } from "../src/modules/catalog/message.js";
 import { createCoupon, DB_AVAILABLE, ownerDb, seedShop, TEST_AGENT_KEY } from "./helpers.js";
 
 const app = buildApp();
@@ -18,6 +18,13 @@ describe("catalog message contract", () => {
   it("normalizes only transport whitespace, not edits", () => {
     expect(messageHash("Hola\r\nPedido\n")).toBe(messageHash("Hola\nPedido"));
     expect(messageHash("1x Pizza")).not.toBe(messageHash("2x Pizza"));
+  });
+  it("acepta espacios de moneda de WhatsApp y conserva el resto del mensaje", () => {
+    const original = "Productos:\n1x Limonada Carmesí — $\u00a05.500,00\nTotal a validar: $\u202f5.500,00";
+    const received = "Productos:\r\n1x Limonada Carmesí — $ 5.500,00\r\nTotal a validar: $ 5.500,00";
+    expect(matchesCatalogMessage(original, received)).toBe(true);
+    expect(matchesCatalogMessage(original, received.replace("1x", "2x"))).toBe(false);
+    expect(matchesCatalogMessage(original, received.replace("5.500", "5.000"))).toBe(false);
   });
 });
 
@@ -36,6 +43,18 @@ describe.runIf(DB_AVAILABLE)("catalog → WhatsApp → order", () => {
     return (await ownerDb().whatsappMessage.create({ data: { businessId: shop.businessId, conversationId: conv, direction: "inbound", content: message } })).id;
   }
   const receive = (messageId: string, conv = conversationId, businessId = shop.businessId) => request(app).post("/v1/agent/catalog-orders").set(key).send({ businessId, conversationId: conv, messageId });
+
+  it("envía al WhatsApp conectado cuando el agente toma pedidos y al contacto si se pausa", async () => {
+    await ownerDb().whatsappIntegration.create({ data: {
+      businessId: shop.businessId, provider: "zernio", providerExternalId: "account-catalog",
+      isActive: true, phoneNumber: "+54 9 381 555 2222"
+    } });
+    await ownerDb().business.update({ where: { id: shop.businessId }, data: { whatsappPhone: null } });
+    expect((await prepare().expect(200)).body.whatsappPhone).toBe("5493815552222");
+    await ownerDb().business.update({ where: { id: shop.businessId }, data: { whatsappPhone: "5493815551111" } });
+    await ownerDb().botSettings.update({ where: { businessId: shop.businessId }, data: { isEnabled: false } });
+    expect((await prepare().expect(200)).body.whatsappPhone).toBe("5493815551111");
+  });
 
   it("prepares without creating orders, customers or consuming stock/coupons; retries return same reference", async () => {
     await createCoupon(shop.businessId, "PROMO10");
@@ -56,7 +75,7 @@ describe.runIf(DB_AVAILABLE)("catalog → WhatsApp → order", () => {
     await createCoupon(shop.businessId, "PROMO10");
     const prepared = await prepare({ ...input(), couponCode: "PROMO10" }).expect(200);
     const a = await inbound(prepared.body.message);
-    const b = await inbound(prepared.body.message);
+    const b = await inbound(prepared.body.message.replaceAll("$ ", "$\u00a0").replaceAll("\n", "\r\n"));
     const results = await Promise.all([receive(a), receive(b)]);
     expect(results.every(r => r.body.ok)).toBe(true);
     expect(results[0]!.body.orderCode).toBe(results[1]!.body.orderCode);

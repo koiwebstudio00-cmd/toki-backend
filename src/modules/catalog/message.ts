@@ -2,13 +2,21 @@ import { createHash } from "node:crypto";
 import type { OrderPayload } from "../orders/pricing.js";
 
 export const messageHash = (text: string) => createHash("sha256").update(text.replace(/\r\n/g, "\n").trim()).digest("hex");
+const normalizeCatalogSpaces = (text: string) => text.replace(/[\u00a0\u202f]/g, " ");
+
+export function matchesCatalogMessage(expected: string, received: string) {
+  return messageHash(normalizeCatalogSpaces(expected)) === messageHash(normalizeCatalogSpaces(received));
+}
+
 export const quoteHash = (payload: OrderPayload) => {
   const { orderCode: _code, ...quote } = payload;
   return messageHash(JSON.stringify(quote));
 };
 
 export function catalogMessage(reference: string, businessName: string, currency: string, p: OrderPayload) {
-  const money = (n: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency }).format(n);
+  const money = (n: number) => normalizeCatalogSpaces(
+    new Intl.NumberFormat("es-AR", { style: "currency", currency }).format(n)
+  );
   return [
     `Hola, quiero pedir en ${businessName} desde el catálogo.`,
     `Referencia de solicitud: WEB-${reference}`,
