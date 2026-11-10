@@ -3,13 +3,15 @@ import * as transfer from "./transfer.js";
 import { rowsBody } from "../customers/transfer.js";
 import { Router } from "express";
 import { businessScope } from "../../lib/request.js";
-import { idParams } from "../../lib/validation.js";
+import { idParams, uuid } from "../../lib/validation.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireBusiness } from "../../middleware/business.js";
 import { cashDeliverySchema, changeStatusSchema, listOrdersQuery, manualSaleSchema, reviewProofSchema, whatsappOrderSchema } from "./schemas.js";
 import * as svc from "./service.js";
 import { openEventStream } from "./stream.js";
 import { issueTicket } from "../../lib/tickets.js";
+import { limitPerMinute } from "../../middleware/rateLimit.js";
+import { sendStatusMessage } from "./status-message.js";
 
 /**
  * /v1/orders/events — sin Authorization: EventSource no manda headers, así que
@@ -55,6 +57,12 @@ orderRoutes.get("/:id", async (req, res) => {
 orderRoutes.patch("/:id/status", async (req, res) => {
   const { id } = idParams.parse(req.params);
   res.json(await svc.changeStatus(businessScope(req), id, changeStatusSchema.parse(req.body)));
+});
+
+orderRoutes.post("/:id/status-message", limitPerMinute(20), async (req, res) => {
+  const { id } = idParams.parse(req.params);
+  const { historyId } = z.object({ historyId: uuid("No encontramos este cambio de estado.") }).parse(req.body);
+  res.json(await sendStatusMessage(businessScope(req), id, historyId));
 });
 
 // Agente v3: el local vio los cambios que hizo el cliente.

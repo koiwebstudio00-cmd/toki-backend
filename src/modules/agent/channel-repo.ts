@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "../../lib/db.js";
 import type { NativeScope } from "./actions.js";
+import { visibleWhatsappMessages } from "../whatsapp/order-status-receipt.js";
 
 export const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 export const channelSettings = (tx: Tx, businessId: string) => tx.botSettings.findUnique({ where: { businessId } });
@@ -9,7 +10,7 @@ export const integrationFor = (tx: Tx, accountId: string) => tx.whatsappIntegrat
   select: { businessId: true, business: { select: { botSettings: true } } }
 });
 export const messageHistory = (tx: Tx, scope: NativeScope) => tx.whatsappMessage.findMany({
-  where: { businessId: scope.businessId, conversationId: scope.conversationId }, orderBy: [{ createdAt: "desc" }, { receivedAt: "desc" }, { id: "desc" }], take: 30
+  where: { businessId: scope.businessId, conversationId: scope.conversationId, ...visibleWhatsappMessages }, orderBy: [{ createdAt: "desc" }, { receivedAt: "desc" }, { id: "desc" }], take: 30
 });
 export async function claimTurn(tx: Tx, now: Date) {
   // Serialize only the very short claim. Model and provider calls never hold a DB lock.
@@ -42,7 +43,7 @@ export async function accessForTurn(tx: Tx, scope: NativeScope, accountId: strin
   const latest = await tx.whatsappMessage.findFirst({ where: { businessId: scope.businessId, conversationId: scope.conversationId, direction: "inbound" }, orderBy: [{ createdAt: "desc" }, { receivedAt: "desc" }, { id: "desc" }] });
   const unfinished = await tx.agentAction.count({ where: { businessId: scope.businessId, conversationId: scope.conversationId, status: { in: ["started", "uncertain"] } } });
   const handoffCaseId = await ownHandoff(tx, scope);
-  const humanReply = await tx.whatsappMessage.count({ where: { businessId: scope.businessId, conversationId: scope.conversationId, direction: "outbound", receivedAt: { gt: latest?.receivedAt ?? new Date() } } });
+  const humanReply = await tx.whatsappMessage.count({ where: { businessId: scope.businessId, conversationId: scope.conversationId, direction: "outbound", ...visibleWhatsappMessages, receivedAt: { gt: latest?.receivedAt ?? new Date() } } });
   return { settings, integration, conversation, latest, unfinished, handoffCaseId, humanReply };
 }
 export const scopedTurn = (tx: Tx, businessId: string, id: string) => tx.agentTurn.findFirst({ where: { businessId, id } });

@@ -46,6 +46,76 @@ describe.runIf(DB_AVAILABLE)("canal nativo WhatsApp de punta a punta", () => {
   afterEach(() => { Object.assign(config, originalConfig); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
   afterAll(async () => { await disconnectDb(); await ownerDb().$disconnect(); });
 
+
+  async function linkedStatusUpdate() {
+    const turn = await receive(event());
+    const order = await request(app).post("/v1/orders/whatsapp").set(bearer(shop.owner)).send({
+      customer: { name: "Ana", phone: "543815550000" }, orderType: "takeaway", paymentMethod: "cash",
+      items: [{ productId: shop.sodaId, quantity: 1 }]
+    }).expect(201);
+    await ownerDb().order.update({ where: { id: order.body.id }, data: { whatsappConversationId: turn.conversationId } });
+    const path = `/v1/orders/${order.body.id}`;
+    const changed = await request(app).patch(`${path}/status`).set(bearer(shop.staff)).send({ status: "ready" }).expect(200);
+    return { turn, path, historyId: changed.body.statusHistory.at(-1).id as string };
+  }
+
+  it("bloquea avisos sin sesión, de otro negocio o fuera de la ventana de WhatsApp", async () => {
+    const { turn, path, historyId } = await linkedStatusUpdate();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await request(app).post(`${path}/status-message`).send({ historyId }).expect(401);
+    const other = await createUser("owner@status-other.test");
+    await createBusiness(other, "status-other");
+    await request(app).post(`${path}/status-message`).set(bearer(other)).send({ historyId }).expect(404);
+    await ownerDb().whatsappMessage.updateMany({
+      where: { businessId: shop.businessId, conversationId: turn.conversationId, direction: "inbound" },
+      data: { createdAt: new Date(Date.now() - 25 * 3600_000) }
+    });
+    await request(app).post(`${path}/status-message`).set(bearer(shop.owner)).send({ historyId }).expect(409);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("un resultado incierto no permite reenviar el aviso ni agrega mensajes internos al chat", async () => {
+    const { turn, path, historyId } = await linkedStatusUpdate();
+    const fetch = vi.fn().mockRejectedValue(new TypeError("Connection lost"));
+    vi.stubGlobal("fetch", fetch);
+    await request(app).post(`${path}/status-message`).set(bearer(shop.staff)).send({ historyId }).expect(409);
+    await request(app).post(`${path}/status-message`).set(bearer(shop.owner)).send({ historyId }).expect(409);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const inbox = await request(app).get(`/v1/conversations/${turn.conversationId}/messages`).set(bearer(shop.staff)).expect(200);
+    expect(inbox.body.data).toHaveLength(1);
+    expect(inbox.body.data[0].direction).toBe("inbound");
+  });
+
+  it("envía un aviso desde el panel por el chat vinculado y no duplica el mismo cambio", async () => {
+    const turn = await receive(event());
+    const order = await request(app).post("/v1/orders/whatsapp").set(bearer(shop.owner)).send({
+      customer: { name: "Ana", phone: "543815550000" }, orderType: "takeaway", paymentMethod: "cash",
+      items: [{ productId: shop.sodaId, quantity: 1 }]
+    }).expect(201);
+    await ownerDb().order.update({ where: { id: order.body.id }, data: { whatsappConversationId: turn.conversationId } });
+    const path = `/v1/orders/${order.body.id}`;
+    const changed = await request(app).patch(`${path}/status`).set(bearer(shop.staff)).send({ status: "ready" }).expect(200);
+    const previous = changed.body.statusHistory[0].id;
+    const historyId = changed.body.statusHistory.at(-1).id;
+    const fetch = vi.fn().mockResolvedValue(Response.json({ success: true, data: { messageId: "status-message-1" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    await request(app).post(`${path}/status-message`).set(bearer(shop.staff)).send({ historyId: previous }).expect(409);
+    expect(fetch).not.toHaveBeenCalled();
+    const sent = await request(app).post(`${path}/status-message`).set(bearer(shop.staff)).send({ historyId }).expect(200);
+    expect(sent.body.status).toBe("sent");
+    const repeated = await request(app).post(`${path}/status-message`).set(bearer(shop.owner)).send({ historyId }).expect(200);
+    expect(repeated.body.status).toBe("already_sent");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = fetch.mock.calls[0]!;
+    expect(String(url)).toContain("/inbox/conversations/provider-thread/messages");
+    expect(JSON.parse(options.body)).toMatchObject({ accountId: "account-test", message: expect.stringContaining(order.body.orderCode) });
+    const inbox = await request(app).get(`/v1/conversations/${turn.conversationId}/messages`).set(bearer(shop.staff)).expect(200);
+    expect(inbox.body.data).toHaveLength(2);
+    expect(inbox.body.data[0]).toMatchObject({ direction: "outbound", content: expect.stringContaining("Tu pedido está listo.") });
+  });
+
   it("verifica la firma cruda, guarda una sola vez y no consume IA dentro del webhook", async () => {
     const payload = JSON.stringify(event());
     const signature = createHmac("sha256", config.ZERNIO_WEBHOOK_SECRET).update(payload).digest("hex");

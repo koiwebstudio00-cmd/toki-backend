@@ -16,6 +16,7 @@ import { zernioDownload } from "../../lib/zernio.js";
 import { isOpen } from "../businesses/service.js";
 import { buildOrderPayload, persistOrder, type PricingItem } from "../orders/pricing.js";
 import { findConversationForContact } from "../whatsapp/contact.js";
+import { visibleWhatsappMessages } from "../whatsapp/order-status-receipt.js";
 import {
   buildClock,
   buildMenu,
@@ -180,6 +181,7 @@ export async function listMessages(
       where: {
         conversationId,
         businessId,
+        ...visibleWhatsappMessages,
         ...(filters.after ? { createdAt: { gt: new Date(filters.after) } } : {}),
         ...(filters.direction ? { direction: filters.direction } : {})
       },

@@ -110,8 +110,8 @@ export async function completeRefund({ ctx, businessId }: BusinessScope, id: str
     if (input.proofKey && !input.proofKey.startsWith(`${businessId}/refund-proofs/${id}/`)) {
       throw new ApiError("VALIDATION_ERROR", "El comprobante no corresponde a este reembolso.");
     }
-    await tx.orderRefund.update({
-      where: { id },
+    const closed = await tx.orderRefund.updateMany({
+      where: { id, businessId, status: "pending" },
       data: {
         status: "completed",
         completedAt: new Date(),
@@ -120,6 +120,7 @@ export async function completeRefund({ ctx, businessId }: BusinessScope, id: str
         notes: input.notes ?? refund.notes
       }
     });
+    if (!closed.count) throw new ApiError("CONFLICT", "Ese reembolso ya se cerró.");
     if (refund.reason === "cancelacion") {
       await tx.order.updateMany({ where: { id: refund.orderId, businessId }, data: { paymentStatus: "refunded" } });
       await tx.payment.updateMany({ where: { orderId: refund.orderId, businessId, status: "paid" }, data: { status: "refunded" } });
@@ -133,10 +134,11 @@ export async function completeRefund({ ctx, businessId }: BusinessScope, id: str
 export async function rejectRefund({ ctx, businessId }: BusinessScope, id: string, notes: string) {
   return withDb(ctx, async (tx) => {
     await pendingRefund(tx, businessId, id);
-    await tx.orderRefund.update({
-      where: { id },
+    const closed = await tx.orderRefund.updateMany({
+      where: { id, businessId, status: "pending" },
       data: { status: "rejected", completedAt: new Date(), completedBy: userId(ctx), notes }
     });
+    if (!closed.count) throw new ApiError("CONFLICT", "Ese reembolso ya se cerró.");
     const [row] = await tx.orderRefund.findMany({ where: { id }, include: refundInclude });
     return toRefundDto(row!);
   });

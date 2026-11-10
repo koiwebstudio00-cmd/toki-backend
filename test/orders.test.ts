@@ -153,6 +153,33 @@ describe.runIf(DB_AVAILABLE)("pedidos", () => {
   });
 
   describe("venta presencial", () => {
+
+    it("rechaza efectivo insuficiente sin persistir una venta ni descontar stock", async () => {
+      const ordersBefore = await ownerDb().order.count({ where: { businessId: s.businessId } });
+      await ownerDb().product.update({ where: { id: s.sodaId }, data: { trackStock: true, stockQuantity: 10 } });
+      const stockBefore = (await ownerDb().product.findUniqueOrThrow({ where: { id: s.sodaId } })).stockQuantity;
+      await request(app).post("/v1/orders/manual").set(bearer(s.staff)).send({
+        paymentMethod: "cash", cashReceived: 1000, items: [{ productId: s.sodaId, quantity: 1 }]
+      }).expect(400);
+      expect(await ownerDb().order.count({ where: { businessId: s.businessId } })).toBe(ordersBefore);
+      expect((await ownerDb().product.findUniqueOrThrow({ where: { id: s.sodaId } })).stockQuantity).toEqual(stockBefore);
+    });
+
+    it("persiste el vuelto del POS y permite registrar la devolución por separado", async () => {
+      const sale = await request(app).post("/v1/orders/manual").set(bearer(s.staff)).send({
+        paymentMethod: "cash", cashReceived: 3000, items: [{ productId: s.sodaId, quantity: 1 }]
+      }).expect(201);
+      const path = `/v1/orders/${sale.body.id}`;
+      const detail = await request(app).get(path).set(bearer(s.staff)).expect(200);
+      expect(detail.body.payments[0]).toMatchObject({ cashReceived: 3000, change: 500 });
+      const cancelled = await request(app).patch(`${path}/status`).set(bearer(s.owner)).send({ status: "cancelled" }).expect(200);
+      expect(cancelled.body.refunds[0]).toMatchObject({ originalPaymentMethod: "cash", status: "pending", amount: 2500 });
+      await request(app).post(`/v1/refunds/${cancelled.body.refunds[0].id}/complete`).set(bearer(s.owner)).send({}).expect(200);
+      const refunded = await request(app).get(path).set(bearer(s.owner)).expect(200);
+      expect(refunded.body).toMatchObject({ paymentStatus: "refunded", refunds: [{ status: "completed", amount: 2500 }] });
+      expect(refunded.body.payments[0]).toMatchObject({ cashReceived: 3000, change: 500 });
+    });
+
     it("cobra efectivo y entrega juntos; valida monto, aislamiento y reintentos", async () => {
       const sale = await request(app).post("/v1/orders/manual").set(bearer(s.owner)).send({ fulfillment: "kitchen", paymentTiming: "pickup", paymentMethod: "cash", items: [{ productId: s.sodaId, quantity: 1 }] }).expect(201);
       const id = sale.body.id;

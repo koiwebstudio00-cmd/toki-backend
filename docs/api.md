@@ -365,6 +365,7 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 | GET | `/orders` | M | `?status=&source=web\|whatsapp\|manual&from=&to=&search=&page=&limit=` | `{ data: [pedido con items, opciones, historial y pagos], meta: { page, limit, total, pages } }` | `OrdersPage` |
 | GET | `/orders/:id` | M | — | Pedido completo (+ `barcode` de cada producto) | `refreshOrder` |
 | PATCH | `/orders/:id/status` | M | `{ status, note? }` | Pedido | RPC `update_order_status`. Desde 0010 no deja salir de `cancelled`. Pasar a `cancelled` devuelve el stock (`restock_order_items`) y guarda `cancelled_by = business_dashboard` y la nota como motivo |
+| POST | `/orders/:id/status-message` | M | `{ historyId }` | `{ status: "sent" \| "already_sent" }` | Envía el estado actual y el seguimiento por el WhatsApp vinculado dentro de la ventana de 24 horas. Registra un envío por cambio de estado. Un resultado incierto requiere verificar el chat. |
 | POST | `/orders/:id/modification-seen` | M | — | Pedido | Agente v3: el local vio los cambios del cliente (`modification_seen_at = now()`); la tarjeta deja de destacarse |
 | POST | `/orders/:id/mark-paid` | M | — | Pedido | RPC `mark_order_paid` |
 | POST | `/orders/manual` | M | `ManualSaleInput` | `201` pedido creado | RPC `create_manual_sale` (POS) |
@@ -376,13 +377,19 @@ Si hace falta que staff vea algo de esto, se ajusta con una migración de polici
 
 ```ts
 ManualSaleInput = {
-  fulfillment?: "immediate" | "kitchen", // immediate por defecto: entregado; kitchen: confirmado para preparar. Ambos cobrados.
+  fulfillment?: "immediate" | "kitchen", // immediate: entregado; kitchen: confirmado para preparar.
+  paymentTiming?: "now" | "pickup", // now por defecto; pickup solo con kitchen y cash.
   customerName?: string, customerPhone?: string,
-  paymentMethod: "cash" | "transfer", discountTotal?: number,
+  paymentMethod: "cash" | "transfer", discountTotal?: number, cashReceived?: number,
   items: [{ productId: uuid, quantity: number, notes?: string | null,
             options: [{ optionId: uuid, valueIds: uuid[] }] }]
 }
 ```
+
+**Avisos de estado por WhatsApp:** `historyId` debe corresponder al último cambio y al estado actual del pedido. Requiere una conversación vinculada, una integración activa y un mensaje entrante del cliente de hace menos de 24 horas. Se reserva un único envío por cambio de estado y se usa ese mismo identificador como clave de idempotencia del proveedor. Un envío confirmado devuelve `sent`; repetirlo devuelve `already_sent`. Un estado desactualizado, una entrega fallida o un resultado incierto devuelve `409`: revisar el chat antes de contactar al cliente por otra vía. Los registros internos de control no aparecen en la bandeja ni en el historial del agente.
+
+**Efectivo y devoluciones:** `cashReceived` se utiliza al cobrar ahora en efectivo. Si no alcanza para cubrir el total calculado en el servidor, la transacción revierte la venta y el stock. Los pagos exponen `cashReceived` y `change`, también después de pasar a `refunded`, para conservar el vuelto original. El detalle del pedido incluye las devoluciones y su `proofUrl` firmada cuando tienen comprobante. Registrar una devolución como completada o rechazada documenta lo ocurrido; no ejecuta una transferencia ni entrega efectivo. Solo puede cerrarse una devolución pendiente, también ante operaciones simultáneas.
+
 
 **Services (`orders/service.ts`):**
 
@@ -558,7 +565,7 @@ Lo que el panel ve y hace con las derivaciones del agente. Todo con el usuario (
 | GET | `/refunds` | M | `?status=pending\|completed\|rejected&page=&limit=` | `{ data: [{ id, amount, reason, status, originalPaymentMethod, destination, requestedAt, completedAt, notes, proofUrl, order, case, conversationId }], meta }` (`proofUrl` firmada por 10 min) |
 | POST | `/refunds/:id/proof-upload` | A | `{ contentType }` (JPG, PNG, WebP o PDF) | `{ uploadUrl, method, headers, key, expiresIn }`: PUT directo al bucket **privado** en `<negocio>/refund-proofs/<reembolso>/` |
 | POST | `/refunds/:id/complete` | A | `{ proofKey?, notes? }` | Reembolso `completed`. La key tiene que ser la que firmó `proof-upload` para ese reembolso. Si era por cancelación, el pedido y sus pagos pasan a `refunded`. 409 si ya se cerró |
-| POST | `/refunds/:id/reject` | A | `{ notes }` (obligatorio) | Reembolso `rejected` |
+| POST | `/refunds/:id/reject` | A | `{ notes }` (obligatorio) | Reembolso `rejected`. 409 si ya se cerró |
 
 **Pedidos (§9), cambios de v3:** `GET /orders` y `GET /orders/:id` suman `modification: { count, lastAt, lastDuring, seen }`, `cancellation: { at, by, reason } | null` y `refunds`. `GET /orders/:id` suma `modifications` (el detalle de cada cambio). Cancelar desde el panel usa `register_order_cancellation` (0011): devuelve stock, cupón y puntos y, si estaba pagado, deja un reembolso pendiente.
 

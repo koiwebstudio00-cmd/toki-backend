@@ -11,6 +11,7 @@ import { toNumber } from "../../lib/money.js";
 import type { BusinessScope } from "../../lib/request.js";
 import { zernioFetch } from "../../lib/zernio.js";
 import { contactConversationOrder, whatsappPhoneVariants } from "./contact.js";
+import { visibleWhatsappMessages } from "./order-status-receipt.js";
 import { latestProfileNames, listContactThreads } from "./conversations-repo.js";
 import type { CompleteConnectInput, ListConversationsQuery, ListMessagesQuery, StartConnectInput } from "./schemas.js";
 
@@ -266,6 +267,7 @@ export async function listMessages({ ctx, businessId }: BusinessScope, conversat
       where: {
         conversationId: { in: threadIds },
         businessId,
+        ...visibleWhatsappMessages,
         ...(q.before ? { createdAt: { lt: new Date(q.before) } } : {})
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],

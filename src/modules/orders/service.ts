@@ -173,6 +173,10 @@ export async function get({ ctx, businessId }: BusinessScope, id: string) {
   if (!row) throw notFound("El pedido no existe.");
   return {
     ...toOrderDto(row),
+    refunds: await Promise.all(row.refunds.map(async refund => ({
+      ...toRefundSummary(refund),
+      ...(refund.proofStoragePath ? { proofUrl: await presignGet("private", refund.proofStoragePath) } : {})
+    }))),
     modifications: modifications.map((m) => ({
       id: m.id,
       source: m.source as "whatsapp" | "dashboard",
@@ -300,7 +304,12 @@ export async function createManualSale({ ctx, businessId }: BusinessScope, input
     };
     const rows = await tx.$queryRaw<{ result: { id: string } }[]>`
       select public.create_manual_sale(${JSON.stringify(payload)}::jsonb) as result`;
-    return reload(tx, businessId, rows[0]!.result.id);
+    const id = rows[0]!.result.id;
+    if (input.paymentMethod === "cash" && input.paymentTiming === "now" && input.cashReceived !== undefined) {
+      const order = await tx.order.findFirstOrThrow({ where: { id, businessId }, select: { total: true } });
+      await saveCashReceipt(tx, businessId, id, toNumber(order.total), input.cashReceived);
+    }
+    return reload(tx, businessId, id);
   });
 }
 
@@ -368,20 +377,25 @@ export async function collectCashAndDeliver({ ctx, businessId }: BusinessScope, 
     if (Math.round(received * 100) < Math.round(total * 100)) throw new ApiError("VALIDATION_ERROR", "El efectivo recibido no alcanza para cubrir el total.");
     await tx.$executeRaw`select public.mark_order_paid(${id}::uuid)`;
     if (order.status !== "delivered") await tx.$executeRaw`select public.update_order_status(${id}::uuid, 'delivered'::public.order_status, 'Cobrado en efectivo y entregado')`;
-    const change = Math.round((received - total) * 100) / 100;
-    const payments = await tx.payment.findMany({ where: { orderId: id, businessId, provider: "cash", status: "paid" } });
-    for (const payment of payments) {
-      const metadata = payment.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata) ? payment.metadata : {};
-      await tx.payment.update({ where: { id: payment.id }, data: { metadata: { ...metadata, cashReceived: received, change } } });
-    }
+    await saveCashReceipt(tx, businessId, id, total, received);
     return reload(tx, businessId, id);
   });
+}
+
+async function saveCashReceipt(tx: Tx, businessId: string, orderId: string, total: number, received: number) {
+  const changeCents = Math.round(received * 100) - Math.round(total * 100);
+  if (changeCents < 0) throw new ApiError("VALIDATION_ERROR", "El efectivo recibido no alcanza para cubrir el total.");
+  const payments = await tx.payment.findMany({ where: { orderId, businessId, provider: "cash", status: "paid" } });
+  for (const payment of payments) {
+    const metadata = payment.metadata && typeof payment.metadata === "object" && !Array.isArray(payment.metadata) ? payment.metadata : {};
+    await tx.payment.update({ where: { id: payment.id }, data: { metadata: { ...metadata, cashReceived: received, change: changeCents / 100 } } });
+  }
 }
 
 /** Expose only receipt fields, never the provider's full metadata. */
 function cashReceiptFields(payment: OrderRow["payments"][number]) {
   const metadata = payment.metadata;
-  if (payment.provider !== "cash" || payment.status !== "paid" || !metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  if (payment.provider !== "cash" || !["paid", "refunded"].includes(payment.status) || !metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
   const { cashReceived, change } = metadata;
   if (typeof cashReceived !== "number" || !Number.isFinite(cashReceived) || cashReceived < 0 || typeof change !== "number" || !Number.isFinite(change) || change < 0) return {};
   return { cashReceived, change };

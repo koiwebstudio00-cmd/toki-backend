@@ -68,6 +68,7 @@ export const manualSaleSchema = z.object({
     errorMap: () => ({ message: "En el mostrador solo se puede cobrar en efectivo o por transferencia." })
   }),
   discountTotal: money("El descuento").default(0),
+  cashReceived: money("El efectivo recibido").optional(),
   notes: z.string().trim().max(500, "La aclaración es demasiado larga.").nullable().optional(),
   items: z.array(manualSaleItemSchema).min(1, "Agregá al menos un producto.").max(100)
 }).refine(input => input.paymentTiming !== "pickup" || (input.fulfillment === "kitchen" && input.paymentMethod === "cash"), { message: "El pago al retirar requiere enviar a cocina y pagar en efectivo.", path: ["paymentTiming"] });
