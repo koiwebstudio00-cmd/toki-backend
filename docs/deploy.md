@@ -552,7 +552,7 @@ Toki Admin se publica desde su repo privado en Vercel. La API sigue en Dokploy. 
 
 ### Configuración y despliegue
 
-Aplicar las migraciones hasta `0026_admin_activation` mediante el entrypoint habitual. Configurar en Environment de la API:
+Aplicar las migraciones hasta `0027_admin_refresh_tokens` mediante el entrypoint habitual. Configurar en Environment de la API:
 
 ```dotenv
 ADMIN_FRONT_URL=https://toki-admin.koistudio.com.ar
@@ -618,7 +618,7 @@ El cliente completa sus datos y contraseña, verifica el email y crea su negocio
 ### Publicación de esta entrega
 
 1. Generar y guardar la clave de cifrado y configurar `ADMIN_FRONT_URL` en Environment de la API, sin modificar las demás variables.
-2. Publicar `toki-backend` y esperar el despliegue y la migración `0026`.
+2. Publicar `toki-backend` y esperar el despliegue y la migración `0027`.
 3. Publicar `toki-admin` y comprobar que `/activar` abre la pantalla administrativa.
 4. Ejecutar el comando de alta y completar contraseña y QR. No reutilizar la invitación de cliente del flujo anterior.
 

@@ -765,6 +765,7 @@ model User {
   adminTotpSecretEncrypted String?        @map("admin_totp_secret_encrypted")
   adminSessionVersion Int                 @default(0) @map("admin_session_version")
   adminActivations  AdminActivation[]
+  adminRefreshTokens AdminRefreshToken[]
   createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
   members            BusinessMember[]
@@ -811,6 +812,25 @@ model SignupInvitation {
   creator   User?     @relation(fields: [createdBy], references: [id], onDelete: SetNull)
 
   @@map("signup_invitations")
+  @@schema("auth")
+}
+
+model AdminRefreshToken {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String              @map("user_id") @db.Uuid
+  tokenHash      String              @unique @map("token_hash")
+  sessionVersion Int                 @map("session_version")
+  userAgent      String?             @map("user_agent")
+  expiresAt      DateTime            @map("expires_at") @db.Timestamptz(6)
+  revokedAt      DateTime?           @map("revoked_at") @db.Timestamptz(6)
+  replacedBy     String?             @map("replaced_by") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacement    AdminRefreshToken?  @relation("AdminRefreshTokenRotation", fields: [replacedBy], references: [id], onDelete: SetNull)
+  replaces       AdminRefreshToken[] @relation("AdminRefreshTokenRotation")
+
+  @@index([userId], map: "admin_refresh_tokens_user_idx")
+  @@map("admin_refresh_tokens")
   @@schema("auth")
 }
 

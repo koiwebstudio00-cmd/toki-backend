@@ -5,7 +5,7 @@ import { ApiError } from "../../lib/errors.js";
 import { hashPassword } from "../../lib/passwords.js";
 import { randomToken, sha256 } from "../../lib/tokens.js";
 import { sealAdminSecret, unsealAdminSecret } from "./crypto.js";
-import { adminSession } from "./session.js";
+import { rememberAdmin } from "./session.js";
 import * as repo from "./repo.js";
 
 const invalid = () => new ApiError("UNAUTHORIZED", "El enlace de activación no está disponible. Pedí uno nuevo al administrador.");
@@ -35,6 +35,7 @@ export async function createAdminActivation(email: string, reset = false) {
     const version = user.adminSessionVersion + 1;
     await tx.user.update({ where: { id: user.id }, data: { adminAccessEnabled: false, adminSessionVersion: version } });
     await tx.adminActivation.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: now, passwordHash: null, totpSecretEncrypted: null } });
+    await repo.revokeUserRefreshTokens(tx, user.id);
     await tx.adminActivation.create({ data: { userId: user.id, tokenHash: sha256(token), sessionVersion: version, expiresAt: new Date(Date.now() + ttlMs) } });
     await tx.signupInvitation.updateMany({ where: { email, usedAt: null, revokedAt: null }, data: { revokedAt: now } });
   });
@@ -64,7 +65,7 @@ export async function startAdminActivation(input: { token: string; fullName: str
   const totp = new TOTP({ issuer: "Toki Admin", label: result.email, secret, algorithm: "SHA1", digits: 6, period: 30 });
   return { ...result, setupToken, secret: secret.base32, provisioningUri: totp.toString() };
 }
-export async function confirmAdminActivation(setupToken: string, code: string) {
+export async function confirmAdminActivation(setupToken: string, code: string, userAgent?: string) {
   const outcome = await withDb(systemCtx, async tx => {
     const initial = await repo.activationBySetup(tx, sha256(setupToken));
     if (!initial) throw invalid();
@@ -91,8 +92,9 @@ export async function confirmAdminActivation(setupToken: string, code: string) {
     await tx.adminActivation.update({ where: { id: row.id }, data: { usedAt: now, passwordHash: null, totpSecretEncrypted: null } });
     await tx.refreshToken.updateMany({ where: { userId: row.userId, revokedAt: null }, data: { revokedAt: now } });
     await tx.emailToken.updateMany({ where: { userId: row.userId, usedAt: null }, data: { usedAt: now } });
-    return updated;
+    await repo.revokeUserRefreshTokens(tx, row.userId);
+    return rememberAdmin(tx, updated, userAgent);
   });
   if (!outcome) throw new ApiError("UNAUTHORIZED", "El código no es válido. Revisá el autenticador y volvé a intentar; el enlace admite cinco intentos.");
-  return adminSession(outcome);
+  return outcome;
 }

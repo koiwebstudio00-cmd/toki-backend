@@ -16,3 +16,14 @@ export const consumeTotpStep = (tx: Tx, id: string, version: number, step: bigin
     OR: [{ lastAdminTotpStep: null }, { lastAdminTotpStep: { lt: step } }] },
   data: { lastAdminTotpStep: step }
 });
+
+// Sesiones recordadas (0027). Solo se guarda el hash del token de la cookie.
+export const createRefreshToken = (tx: Tx, data: { userId: string; tokenHash: string; sessionVersion: number; expiresAt: Date; userAgent?: string }) =>
+  tx.adminRefreshToken.create({ data, select: { id: true } });
+export const refreshTokenByHash = (tx: Tx, tokenHash: string) => tx.adminRefreshToken.findUnique({ where: { tokenHash } });
+export const revokeRefreshToken = (tx: Tx, id: string, replacedBy?: string) => tx.adminRefreshToken.updateMany({
+  where: { id, revokedAt: null }, data: { revokedAt: new Date(), replacedBy: replacedBy ?? null }
+});
+export const revokeUserRefreshTokens = (tx: Tx, userId: string) => tx.adminRefreshToken.updateMany({
+  where: { userId, revokedAt: null }, data: { revokedAt: new Date() }
+});

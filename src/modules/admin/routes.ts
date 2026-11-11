@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { idParams, uuid } from "../../lib/validation.js";
-import { authLimiter } from "../../middleware/rateLimit.js";
+import { authLimiter, limitPerMinute } from "../../middleware/rateLimit.js";
 import { emailOnlySchema, loginSchema } from "../auth/schemas.js";
 import * as invitations from "../auth/invitations.js";
-import { loginAdmin, requireAdminSession } from "./session.js";
+import { clearAdminCookie, loginAdmin, logoutAdmin, readAdminCookie, refreshAdmin, requireAdminSession, setAdminCookie } from "./session.js";
 import * as admin from "./service.js";
 
 import { activationCheckInput, activationStartInput, activationConfirmInput } from "./activation.schemas.js";
@@ -16,7 +16,25 @@ const pageInput = z.object({ cursor: uuid("Página inválida.").optional(), q: z
 
 adminRoutes.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 adminRoutes.post("/session", authLimiter(), async (req, res) => {
-  res.json(await loginAdmin(sessionInput.parse(req.body)));
+  const remembered = await loginAdmin(sessionInput.parse(req.body), req.get("user-agent"));
+  setAdminCookie(res, remembered);
+  res.json(remembered.session);
+});
+// Renueva el acceso con la cookie httpOnly del dispositivo recordado (30 días desde el login).
+adminRoutes.post("/session/refresh", limitPerMinute(30), async (req, res) => {
+  try {
+    const remembered = await refreshAdmin(readAdminCookie(req), req.get("user-agent"));
+    setAdminCookie(res, remembered);
+    res.json(remembered.session);
+  } catch (error) {
+    clearAdminCookie(res);
+    throw error;
+  }
+});
+adminRoutes.post("/session/logout", limitPerMinute(30), async (req, res) => {
+  await logoutAdmin(readAdminCookie(req));
+  clearAdminCookie(res);
+  res.json({ ok: true });
 });
 
 adminRoutes.post("/activation/check", authLimiter(), async (req, res) => {
@@ -27,7 +45,9 @@ adminRoutes.post("/activation/start", authLimiter(), async (req, res) => {
 });
 adminRoutes.post("/activation/confirm", authLimiter(), async (req, res) => {
   const input = activationConfirmInput.parse(req.body);
-  res.json(await confirmAdminActivation(input.setupToken, input.code));
+  const remembered = await confirmAdminActivation(input.setupToken, input.code, req.get("user-agent"));
+  setAdminCookie(res, remembered);
+  res.json(remembered.session);
 });
 
 adminRoutes.use(requireAdminSession);

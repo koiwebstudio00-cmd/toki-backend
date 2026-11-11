@@ -62,12 +62,24 @@
 
 Toki Admin usa `POST /v1/admin/session` con `{ email, password, code }`. La API emite un token administrativo de 15 minutos después de validar la cuenta verificada, su permiso en la base y el autenticador. El token incluye una versión verificada en cada solicitud. Cada código válido se consume una sola vez. Las demás rutas bajo `/v1/admin` requieren este token.
 
+**Dispositivo recordado (migración `0027_admin_refresh_tokens`, 2026-11-11).** El login y `activation/confirm` también dejan una cookie `toki_admin_session` (`__Host-toki_admin_session` en producción): httpOnly, `SameSite=Strict`, `Path=/`, `Secure` en producción, válida 30 días desde el ingreso con autenticador. En la base solo se guarda su hash, en `auth.admin_refresh_tokens`, separada de los refresh del panel de negocios. Las respuestas de sesión agregan `rememberUntil` (ISO).
+
+- `POST /v1/admin/session/refresh` (sin body, con la cookie) rota el token y devuelve `{ accessToken, expiresIn, email, rememberUntil }`. La rotación no extiende los 30 días. Responde 401 y borra la cookie si falta, venció, se revocó, cambió la versión administrativa (`--reset`, cambio de contraseña) o la cuenta perdió el acceso. Reusar un token rotado hace más de 10 segundos revoca todas las sesiones recordadas del usuario. Límite: 30 por minuto.
+- `POST /v1/admin/session/logout` revoca el token de la cookie y la borra. No requiere Bearer.
+- El navegador solo envía la cookie al mismo dominio: en producción el panel llama a la API mediante el proxy `/api/v1/admin/*` de Vercel y, en desarrollo, mediante el proxy de Vite.
+
 - `POST /v1/admin/activation/check` con `{ token }` devuelve `{ email }` para un enlace administrativo válido.
 - `POST /v1/admin/activation/start` con `{ token, fullName, password }` intercambia el enlace por `{ setupToken, secret, provisioningUri, email, expiresAt }`. Configura el autenticador, sin habilitar aún el acceso.
 - `POST /v1/admin/activation/confirm` con `{ setupToken, code }` completa el alta y devuelve la sesión administrativa. El enlace vence en 30 minutos y se bloquea tras cinco códigos incorrectos. Contraseña y secreto temporales se eliminan al finalizar.
 - El alta y la recuperación solo se emiten mediante `dist/ops/bootstrap-admin.js`, nunca desde un endpoint público. No crean invitaciones de clientes ni negocios.
 
-- `GET /v1/admin/overview?days=30` devuelve totales globales y la distribución de pedidos por estado actual y canal. Acepta 7, 30 o 90 días.
+- `GET /v1/admin/overview?days=30` devuelve totales globales y la distribución de pedidos por estado actual y canal. Acepta 7, 30 o 90 días calendario en hora de Argentina (`since` indica el inicio). Desde 2026-11-11 agrega, sin quitar campos:
+  - `newBusinesses`; `previous: { orders, newUsers, newBusinesses }` del período anterior de igual duración.
+  - `revenue: [{ currency, orders, total, averageTicket, previousTotal }]`: facturación por moneda, sin pedidos cancelados ni reintegrados.
+  - `series: [{ date: "YYYY-MM-DD", orders, users, businesses, revenue: { [currency]: number } }]`, un punto por día, con ceros.
+  - `topBusinesses`: hasta 10 negocios con pedidos en el período, ordenados por facturación (`id, name, slug, currency, isActive, orders, revenue, lastOrderAt`).
+  - `businessActivity: { withOrders, withoutOrders }` sobre negocios activos y `dormantBusinesses`: hasta 5 activos sin pedidos en el período (`id, name, slug, createdAt, lastOrderAt`).
+  - `invitations: { created, used, verified, withBusiness, pending, expired, revoked }` de las invitaciones creadas en el período.
 - `GET /v1/admin/users`, `GET /v1/admin/businesses` y `GET /v1/admin/orders` devuelven `{ data, nextCursor }`. Aceptan búsqueda `q` y paginación por `cursor`. Los pedidos exponen información operativa sin teléfono, domicilio ni notas del cliente.
 - `GET /v1/admin/invitations` lista las últimas 100 invitaciones. `POST /v1/admin/invitations` con `{ email }` genera una invitación y devuelve su código una sola vez. El código vence a los siete días. `POST /v1/admin/invitations/:id/revoke` revoca una invitación activa.
 

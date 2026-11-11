@@ -1,5 +1,6 @@
 import { systemCtx, withDb } from "../../lib/db.js";
 import { toNumber } from "../../lib/money.js";
+import * as stats from "./stats.repo.js";
 
 const pageSize = 25;
 const newestFirst = [{ createdAt: "desc" }, { id: "desc" }] as const;
@@ -14,12 +15,14 @@ function page<T extends { id: string }>(rows: T[]) {
 }
 
 export async function overview(days: 7 | 30 | 90) {
-  const since = new Date(Date.now() - days * 86_400_000);
   return withDb(systemCtx, async tx => {
+    // Ventana de días calendario (hora de Argentina) y el período anterior de igual duración.
+    const { since, previousSince } = await stats.periodBounds(tx, days);
     const users = await tx.user.count();
     const newUsers = await tx.user.count({ where: { createdAt: { gte: since } } });
     const businesses = await tx.business.count();
     const activeBusinesses = await tx.business.count({ where: { isActive: true } });
+    const newBusinesses = await tx.business.count({ where: { createdAt: { gte: since } } });
     const groups = await tx.order.groupBy({
       by: ["status", "source"], where: { createdAt: { gte: since } }, _count: { _all: true }
     });
@@ -32,8 +35,45 @@ export async function overview(days: 7 | 30 | 90) {
       sources[group.source] = (sources[group.source] ?? 0) + count;
       orders += count;
     }
-    return { days, users, newUsers, businesses, activeBusinesses, orders, statuses, sources };
+
+    const current = await stats.revenueByCurrency(tx, since);
+    const before = await stats.revenueByCurrency(tx, previousSince, since);
+    const revenue = current.map(row => ({ ...row, averageTicket: row.orders ? Math.round(row.total / row.orders * 100) / 100 : 0,
+      previousTotal: before.find(item => item.currency === row.currency)?.total ?? 0 }));
+    for (const row of before) {
+      if (!revenue.some(item => item.currency === row.currency)) revenue.push({ currency: row.currency, orders: 0, total: 0, averageTicket: 0, previousTotal: row.total });
+    }
+    const previous = await stats.countsBetween(tx, previousSince, since);
+
+    const series = calendarDays(since, days).map(date => ({ date, orders: 0, users: 0, businesses: 0, revenue: {} as Record<string, number> }));
+    const byDate = new Map(series.map(point => [point.date, point]));
+    for (const row of await stats.dailyOrders(tx, since)) {
+      const point = byDate.get(row.date);
+      if (!point) continue;
+      point.orders += row.orders;
+      point.revenue[row.currency] = (point.revenue[row.currency] ?? 0) + row.revenue;
+    }
+    for (const row of await stats.dailySignups(tx, since)) {
+      const point = byDate.get(row.date);
+      if (point) { point.users = row.users; point.businesses = row.businesses; }
+    }
+
+    return {
+      days, since: since.toISOString(), users, newUsers, businesses, activeBusinesses, newBusinesses, orders, statuses, sources,
+      revenue, previous, series,
+      topBusinesses: await stats.topBusinesses(tx, since),
+      businessActivity: await stats.businessActivity(tx, since),
+      dormantBusinesses: await stats.dormantBusinesses(tx, since),
+      invitations: await stats.invitationFunnel(tx, since)
+    };
   });
+}
+
+const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: stats.ADMIN_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+/** Fechas YYYY-MM-DD desde `since` (medianoche en Argentina), una por día. */
+function calendarDays(since: Date, days: number) {
+  // Mediodía de cada día: inmune a cambios de horario si la zona los vuelve a tener.
+  return Array.from({ length: days }, (_, index) => dayKey.format(new Date(since.getTime() + (index + 0.5) * 86_400_000)));
 }
 
 export async function listUsers(cursor?: string, query?: string) {

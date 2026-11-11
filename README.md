@@ -14,7 +14,7 @@ Resumen para quien ya tiene Postgres 17 andando:
 npm install                     # corre prisma generate
 cp .env.example .env            # poner tu usuario de Postgres en las URLs de migrate y test
 createdb toki && createdb toki_test
-npm run db:migrate:deploy       # crea toki_app y aplica las migraciones pendientes (actualmente 0001–0026)
+npm run db:migrate:deploy       # crea toki_app y aplica las migraciones pendientes (actualmente 0001–0027)
 npm run seed                    # 2 negocios demo (owner@burger.test / toki12345)
 npm run dev                     # http://localhost:3000/v1/health
 npm run test:prepare && npm test
