@@ -13,6 +13,7 @@ import { checkAdminActivation, startAdminActivation, confirmAdminActivation } fr
 export const adminRoutes = Router();
 const sessionInput = loginSchema.extend({ code: z.string().trim().regex(/^\d{6}$/, "Ingresá el código de seis dígitos.") });
 const pageInput = z.object({ cursor: uuid("Página inválida.").optional(), q: z.string().trim().max(120).optional() });
+const businessPageInput = pageInput.extend({ whatsapp: z.enum(["connected", "pending", "none"], { errorMap: () => ({ message: "Filtro de WhatsApp inválido." }) }).optional() });
 
 adminRoutes.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 adminRoutes.post("/session", authLimiter(), async (req, res) => {
@@ -63,8 +64,20 @@ adminRoutes.get("/users", async (req, res) => {
 });
 
 adminRoutes.get("/businesses", async (req, res) => {
-  const { cursor, q } = pageInput.parse(req.query);
-  res.json(await admin.listBusinesses(cursor, q));
+  const { cursor, q, whatsapp } = businessPageInput.parse(req.query);
+  res.json(await admin.listBusinesses(cursor, q, whatsapp));
+});
+
+adminRoutes.get("/businesses/:id", async (req, res) => {
+  res.json(await admin.businessDetail(idParams.parse(req.params).id));
+});
+
+adminRoutes.get("/users/:id", async (req, res) => {
+  res.json(await admin.userDetail(idParams.parse(req.params).id));
+});
+
+adminRoutes.get("/orders/:id", async (req, res) => {
+  res.json(await admin.orderDetail(idParams.parse(req.params).id));
 });
 
 adminRoutes.get("/orders", async (req, res) => {

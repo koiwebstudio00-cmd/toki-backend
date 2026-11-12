@@ -81,7 +81,11 @@ Toki Admin usa `POST /v1/admin/session` con `{ email, password, code }`. La API 
   - `businessActivity: { withOrders, withoutOrders }` sobre negocios activos y `dormantBusinesses`: hasta 5 activos sin pedidos en el período (`id, name, slug, createdAt, lastOrderAt`).
   - `invitations: { created, used, verified, withBusiness, pending, expired, revoked }` de las invitaciones creadas en el período.
 - `GET /v1/admin/users`, `GET /v1/admin/businesses` y `GET /v1/admin/orders` devuelven `{ data, nextCursor }`. Aceptan búsqueda `q` y paginación por `cursor`. Los pedidos exponen información operativa sin teléfono, domicilio ni notas del cliente.
-- `GET /v1/admin/invitations` lista las últimas 100 invitaciones. `POST /v1/admin/invitations` con `{ email }` genera una invitación y devuelve su código una sola vez. El código vence a los siete días. `POST /v1/admin/invitations/:id/revoke` revoca una invitación activa.
+- `GET /v1/admin/businesses` acepta además `whatsapp=connected | pending | none`: integración activa, integración iniciada y no completada, o sin integración. Cada negocio trae `whatsapp: { status, provider, phoneNumber }`.
+- `GET /v1/admin/businesses/:id` devuelve el negocio con `members` (`userId, email, fullName, role`), `stats: { orders30d, revenue30d, lastOrderAt }`, `whatsapp: { status, provider, phoneNumber, lastMessageAt, conversationsLast7d }` y `recentOrders` (los últimos 5). No devuelve secretos ni identificadores del proveedor de WhatsApp. 404 si el negocio no existe.
+- `GET /v1/admin/users/:id` devuelve la cuenta (`id, email, fullName, createdAt, emailVerifiedAt`) y sus negocios con rol. No incluye campos de administración ni sesiones. 404 si no existe.
+- `GET /v1/admin/orders/:id` devuelve el pedido con `business`, `customer: { name, phone }`, `amounts`, `items` con opciones, `history` de estados y `paymentProofs`. El teléfono sale enmascarado (últimos 4 dígitos) y la dirección de entrega no se devuelve. 404 si no existe.
+- `GET /v1/admin/invitations` lista las últimas 100 invitaciones. `POST /v1/admin/invitations` con `{ email }` genera una invitación y devuelve su código una sola vez. El código vence a los siete días desde su creación, sirve una sola vez y solo para el email indicado. `POST /v1/admin/invitations/:id/revoke` revoca una invitación activa.
 
 ```ts
 Session = {

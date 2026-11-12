@@ -1,5 +1,9 @@
+import type { Prisma } from "@prisma/client";
 import { systemCtx, withDb } from "../../lib/db.js";
+import { notFound } from "../../lib/errors.js";
 import { toNumber } from "../../lib/money.js";
+import * as detail from "./detail.repo.js";
+import { maskPhone, whatsappStatus } from "./mapping.js";
 import * as stats from "./stats.repo.js";
 
 const pageSize = 25;
@@ -87,16 +91,93 @@ export async function listUsers(cursor?: string, query?: string) {
   }))));
 }
 
-export async function listBusinesses(cursor?: string, query?: string) {
+export type WhatsappFilter = "connected" | "pending" | "none";
+
+const whatsappFilter: Record<WhatsappFilter, Prisma.BusinessWhereInput> = {
+  connected: { whatsappIntegration: { isActive: true } },
+  pending: { whatsappIntegration: { isActive: false } },
+  none: { whatsappIntegration: { is: null } },
+};
+
+export async function listBusinesses(cursor?: string, query?: string, whatsapp?: WhatsappFilter) {
+  const filters: Prisma.BusinessWhereInput[] = [];
+  if (query) filters.push({ OR: [
+    { name: { contains: query, mode: "insensitive" as const } },
+    { slug: { contains: query, mode: "insensitive" as const } },
+  ] });
+  if (whatsapp) filters.push(whatsappFilter[whatsapp]);
   return withDb(systemCtx, async tx => page((await tx.business.findMany({
     ...pagination(cursor),
-    ...(query ? { where: { OR: [
-      { name: { contains: query, mode: "insensitive" as const } },
-      { slug: { contains: query, mode: "insensitive" as const } }
-    ] } } : {}),
+    ...(filters.length ? { where: { AND: filters } } : {}),
     select: { id: true, name: true, slug: true, city: true, isActive: true, createdAt: true,
-      _count: { select: { orders: true, businessMembers: true } } }
-  })).map(({ _count, ...row }) => ({ ...row, orders: _count.orders, users: _count.businessMembers }))));
+      _count: { select: { orders: true, businessMembers: true } },
+      whatsappIntegration: { select: { provider: true, isActive: true, phoneNumber: true } } }
+  })).map(({ _count, whatsappIntegration, ...row }) => ({
+    ...row, orders: _count.orders, users: _count.businessMembers, whatsapp: whatsappStatus(whatsappIntegration),
+  }))));
+}
+
+const DAY_MS = 86_400_000;
+
+/** Detalle de un negocio: equipo, actividad de 30 días, estado de WhatsApp y últimos pedidos. */
+export async function businessDetail(id: string) {
+  return withDb(systemCtx, async tx => {
+    const business = await detail.businessBase(tx, id);
+    if (!business) throw notFound("El negocio no existe.");
+    const period = await detail.businessPeriod(tx, id, new Date(Date.now() - 30 * DAY_MS));
+    const last = await detail.lastOrderAt(tx, id);
+    const orders = await detail.recentOrders(tx, id, 5);
+    const integration = await detail.whatsappIntegrationOf(tx, id);
+    const lastMessageAt = await detail.lastWhatsappMessageAt(tx, id);
+    const conversationsLast7d = await detail.conversationsSince(tx, id, new Date(Date.now() - 7 * DAY_MS));
+    return {
+      id: business.id, name: business.name, slug: business.slug, city: business.city, currency: business.currency,
+      isActive: business.isActive, createdAt: business.createdAt,
+      members: business.businessMembers.map(member => ({
+        userId: member.user.id, email: member.user.email, fullName: member.user.profile?.fullName ?? null, role: member.role,
+      })),
+      stats: { orders30d: period._count._all, revenue30d: toNumber(period._sum.total) ?? 0, lastOrderAt: last?.createdAt ?? null },
+      whatsapp: { ...whatsappStatus(integration), lastMessageAt, conversationsLast7d },
+      recentOrders: orders.map(order => ({ ...order, total: toNumber(order.total) })),
+    };
+  });
+}
+
+/** Detalle de una cuenta: sin campos de administración ni sesiones. */
+export async function userDetail(id: string) {
+  return withDb(systemCtx, async tx => {
+    const user = await detail.userBase(tx, id);
+    if (!user) throw notFound("El usuario no existe.");
+    return {
+      id: user.id, email: user.email, fullName: user.profile?.fullName ?? null,
+      createdAt: user.createdAt, emailVerifiedAt: user.emailVerifiedAt,
+      businesses: user.members.map(member => ({ id: member.business.id, name: member.business.name, role: member.role })),
+    };
+  });
+}
+
+/** Detalle de un pedido. El teléfono del cliente sale enmascarado y la dirección no sale (D3). */
+export async function orderDetail(id: string) {
+  return withDb(systemCtx, async tx => {
+    const order = await detail.orderBase(tx, id);
+    if (!order) throw notFound("El pedido no existe.");
+    return {
+      id: order.id, orderCode: order.orderCode, status: order.status, paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod, orderType: order.orderType, source: order.source, createdAt: order.createdAt,
+      business: order.business,
+      customer: { name: order.customerName, phone: maskPhone(order.customerPhone) },
+      amounts: {
+        subtotal: toNumber(order.subtotal), deliveryFee: toNumber(order.deliveryFee),
+        discountTotal: toNumber(order.discountTotal), total: toNumber(order.total),
+      },
+      items: order.items.map(item => ({
+        productName: item.productName, quantity: toNumber(item.quantity), unitPrice: toNumber(item.unitPrice),
+        totalPrice: toNumber(item.totalPrice), options: item.options.map(option => ({ name: option.optionName, value: option.valueName })),
+      })),
+      history: order.statusHistory.map(entry => ({ from: entry.fromStatus, to: entry.toStatus, at: entry.createdAt, note: entry.note })),
+      paymentProofs: order.paymentProofs,
+    };
+  });
 }
 
 export async function listOrders(cursor?: string, query?: string) {
