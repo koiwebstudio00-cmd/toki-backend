@@ -85,8 +85,9 @@ adminRoutes.get("/orders", async (req, res) => {
   res.json(await admin.listOrders(cursor, q));
 });
 
-adminRoutes.get("/invitations", async (_req, res) => {
-  res.json({ data: await invitations.listInvitations() });
+adminRoutes.get("/invitations", async (req, res) => {
+  const { cursor } = pageInput.pick({ cursor: true }).parse(req.query);
+  res.json(await invitations.listInvitations(cursor));
 });
 
 adminRoutes.post("/invitations", async (req, res) => {

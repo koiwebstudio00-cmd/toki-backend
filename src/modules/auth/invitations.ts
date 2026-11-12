@@ -31,21 +31,40 @@ export async function consumeInvitation(tx: Tx, code: string, email: string) {
   if (result.count !== 1) throw invalidInvite();
 }
 
-export function listInvitations() {
-  return withDb(systemCtx, tx => tx.signupInvitation.findMany({
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 100, select: summary
+const invitationPageSize = 30;
+
+/** Todas las invitaciones, de la más reciente a la más antigua, de a 30 por página. */
+export async function listInvitations(cursor?: string) {
+  const rows = await withDb(systemCtx, tx => tx.signupInvitation.findMany({
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: invitationPageSize + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: summary,
   }));
+  const data = rows.slice(0, invitationPageSize);
+  return { data, nextCursor: rows.length > invitationPageSize ? data.at(-1)!.id : null };
 }
 
+/**
+ * Una sola invitación activa por email: al generar otra, las activas anteriores quedan revocadas
+ * (mismo criterio que la activación de superadmins). `replaced` indica cuántas se revocaron.
+ * Reactivar una invitación revocada o vencida es esta misma llamada: el código original no se
+ * puede recuperar, porque en la base solo se guarda su hash.
+ */
 export async function createInvitation(email: string, userId: string | null) {
   const code = randomToken();
   const invitation = await withDb(systemCtx, async tx => {
     if (await tx.user.findUnique({ where: { email }, select: { id: true } })) {
       throw new ApiError("CONFLICT", "Ya existe una cuenta con ese email.");
     }
-    return tx.signupInvitation.create({
+    const now = new Date();
+    const replaced = await tx.signupInvitation.updateMany({
+      where: { email, usedAt: null, revokedAt: null, expiresAt: { gt: now } }, data: { revokedAt: now }
+    });
+    const created = await tx.signupInvitation.create({
       data: { email, codeHash: sha256(code), createdBy: userId, expiresAt: addDays(7) }, select: summary
     });
+    return { ...created, replaced: replaced.count };
   });
   return { ...invitation, code };
 }

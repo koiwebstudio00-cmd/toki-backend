@@ -85,7 +85,10 @@ Toki Admin usa `POST /v1/admin/session` con `{ email, password, code }`. La API 
 - `GET /v1/admin/businesses/:id` devuelve el negocio con `members` (`userId, email, fullName, role`), `stats: { orders30d, revenue30d, lastOrderAt }`, `whatsapp: { status, provider, phoneNumber, lastMessageAt, conversationsLast7d }` y `recentOrders` (los últimos 5). No devuelve secretos ni identificadores del proveedor de WhatsApp. 404 si el negocio no existe.
 - `GET /v1/admin/users/:id` devuelve la cuenta (`id, email, fullName, createdAt, emailVerifiedAt`) y sus negocios con rol. No incluye campos de administración ni sesiones. 404 si no existe.
 - `GET /v1/admin/orders/:id` devuelve el pedido con `business`, `customer: { name, phone }`, `amounts`, `items` con opciones, `history` de estados y `paymentProofs`. El teléfono sale enmascarado (últimos 4 dígitos) y la dirección de entrega no se devuelve. 404 si no existe.
-- `GET /v1/admin/invitations` lista las últimas 100 invitaciones. `POST /v1/admin/invitations` con `{ email }` genera una invitación y devuelve su código una sola vez. El código vence a los siete días desde su creación, sirve una sola vez y solo para el email indicado. `POST /v1/admin/invitations/:id/revoke` revoca una invitación activa.
+- `GET /v1/admin/invitations` devuelve `{ data, nextCursor }` con todas las invitaciones, de a 30 por página y de la más reciente a la más antigua. Acepta `cursor`.
+- `POST /v1/admin/invitations` con `{ email }` genera una invitación y devuelve su código una sola vez. Si el email tenía invitaciones activas, quedan revocadas y la respuesta trae `replaced` (cantidad). El código vence a los siete días desde su creación, sirve una sola vez y solo para el email indicado.
+- `POST /v1/admin/invitations/:id/revoke` revoca una invitación activa y responde `{ ok: true }`.
+- «Reactivar» una invitación revocada o vencida es generar una nueva con `POST /v1/admin/invitations`. El código original no se puede recuperar porque en la base solo se guarda su hash.
 
 ```ts
 Session = {
